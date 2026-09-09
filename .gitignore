@@ -6,3 +6,7 @@ venv/
 *.egg-info/
 data/processed/*.db
 .pytest_cache/
+.DS_Store
+
+# Raw transcript source files stay local - not committed to the repo.
+data/raw/*
