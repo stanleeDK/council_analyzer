@@ -4,6 +4,8 @@ Brute-force cosine in numpy is plenty fast for a corpus of a few thousand
 chunks (a handful of cities' worth of council meetings) - no vector DB
 needed yet. Revisit if the corpus grows into the tens of thousands.
 """
+from __future__ import annotations
+
 import json
 import sqlite3
 from dataclasses import dataclass

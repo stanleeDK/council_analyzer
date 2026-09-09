@@ -4,6 +4,8 @@ Turns a free-text question into a validated ResearchPlan. Deliberately has
 no dependency on the corpus/embeddings - it's a standalone building block
 (see README.md Stage 1) that later stages call before any retrieval happens.
 """
+from __future__ import annotations
+
 from anthropic import Anthropic
 
 from app.models.schemas import ResearchPlan

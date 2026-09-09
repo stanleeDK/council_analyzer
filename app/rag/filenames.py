@@ -21,6 +21,8 @@ Some older files may not match this format at all (no brackets); those
 fall back to upload_date=None, video_id=None, title=whole filename stem,
 rather than raising.
 """
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 

@@ -5,6 +5,8 @@ We merge consecutive lines up to a target word count, and keep the
 start/end timestamp the chunk spans so it can be cited (and, later,
 deep-linked into the source video).
 """
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from app.rag.parse_lrc import TranscriptLine
