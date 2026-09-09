@@ -45,10 +45,10 @@ normal internet access the first time you run ingestion.
 
 ```bash
 # 1. Ingest all .lrc files under data/raw/<city>/
-python scripts/ingest_documents.py
+python3 scripts/ingest_documents.py
 
 # 2. Turn a question into a structured research plan (Stage 1, standalone)
-python scripts/plan.py "How has the city's stance on short-term rentals changed?"
+python3 scripts/plan.py "How has the city's or council's stance on immigration  changed?"
 
 # 3. Ask a question against the indexed transcripts and get a cited answer (Stage 2)
 python scripts/ask.py "What did the council decide about short-term rentals?"
