@@ -7,7 +7,7 @@ dependencies = [
     "anthropic>=0.40",
     "pydantic>=2.0",
     "sentence-transformers>=3.0",
-    "numpy>=1.26",
+    "numpy>=1.26,<2",  # torch/sentence-transformers builds available for older Python aren't NumPy-2-compatible yet
     "python-dotenv>=1.0",
 ]
 
