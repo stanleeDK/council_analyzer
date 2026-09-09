@@ -1,8 +1,9 @@
 CREATE TABLE IF NOT EXISTS chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     city TEXT NOT NULL,
-    meeting_date TEXT,
-    meeting_title TEXT,
+    upload_date TEXT,
+    title TEXT,
+    video_id TEXT,
     source_file TEXT NOT NULL,
     start_ts REAL NOT NULL,
     end_ts REAL NOT NULL,

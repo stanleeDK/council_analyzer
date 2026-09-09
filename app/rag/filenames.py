@@ -1,44 +1,55 @@
-"""Best-effort metadata extraction from council-meeting filenames.
+"""Metadata extraction from council-meeting filenames.
 
-Filenames look like:
-    20201120_Protection__Policy_Committee_111920_3_aBAj4WQ1c.enorig.lrc
+Standard format (confirmed across the real corpus):
 
-There's no reliable standard here, so this is heuristic: pull a leading
-YYYYMMDD date if present, strip the trailing video-id/language suffix, and
-turn the rest into a human-readable title. City is NOT derivable from the
-filename in the sample data — it must come from the containing directory
-(see ingest.py, which expects data/raw/<city>/*.lrc).
+    [UPLOAD_DATE] Free-form name, may embed a meeting date in any format [VIDEO_ID].en(-orig).lrc
+
+Examples actually seen:
+    [20251118] Finance Committee： Meeting of November 17, 2025 [g_vfAOPT3Y4].en-orig.lrc
+    [20250403] Committee of the Whole 4⧸2⧸2025 [KB9ilVA54tA].en-orig.lrc
+    [20260507] 2024-11-07 - Annual Budget Adoption [2N3v6eh1IQM].en-orig.lrc
+    [20190627] Steering & Rules 6⧸27⧸19 Item 5 [4gYsZ0f_mJg].en-orig.lrc
+    [20141217] Waukesha County Monthly Update - August 2014 [tmZywbnaaRQ].en-orig.lrc
+
+The bracketed leading date is the UPLOAD date, not necessarily the meeting
+date - they can differ by months (see the 2026/2024 example above). The
+free-form name may contain a meeting date in whatever format the uploader
+used; we deliberately don't try to parse that out - it's kept verbatim as
+the title.
+
+Some older files may not match this format at all (no brackets); those
+fall back to upload_date=None, video_id=None, title=whole filename stem,
+rather than raising.
 """
 import re
 from dataclasses import dataclass
 
-_DATE_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})_")
-# Matches only a single trailing underscore-free token (typically a YouTube
-# video ID, e.g. "_aBAj4WQ1c") - deliberately does not eat earlier segments.
-_TRAILING_ID_RE = re.compile(r"_[A-Za-z0-9]{8,12}$")
+_BRACKET_RE = re.compile(
+    r"^\[(\d{8})\]\s*(.+?)\s*\[([A-Za-z0-9_-]+)\]\.en(?:-?orig)?\.lrc$"
+)
 
 
 @dataclass
 class MeetingMeta:
-    meeting_date: str | None
-    meeting_title: str
+    upload_date: str | None  # YYYY-MM-DD, from the leading [YYYYMMDD] - NOT the meeting date
+    title: str
+    video_id: str | None
 
 
-def parse_filename(stem: str) -> MeetingMeta:
-    """stem: filename without directory or extension(s), e.g.
-    '20201120_Protection__Policy_Committee_111920_3_aBAj4WQ1c.enorig'
-    """
-    stem = re.sub(r"\.en(orig)?$", "", stem)
+def parse_filename(filename: str) -> MeetingMeta:
+    match = _BRACKET_RE.match(filename)
+    if not match:
+        # Doesn't match the standard format - don't guess, just fall back.
+        title = re.sub(r"\.lrc$", "", filename)
+        return MeetingMeta(upload_date=None, title=title, video_id=None)
 
-    date_match = _DATE_RE.match(stem)
-    meeting_date = None
-    rest = stem
-    if date_match:
-        year, month, day = date_match.groups()
-        meeting_date = f"{year}-{month}-{day}"
-        rest = stem[date_match.end():]
+    raw_date, title, video_id = match.groups()
+    upload_date = f"{raw_date[0:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+    return MeetingMeta(upload_date=upload_date, title=title, video_id=video_id)
 
-    rest = _TRAILING_ID_RE.sub("", rest)
-    title = re.sub(r"[_\s]+", " ", rest).strip()
 
-    return MeetingMeta(meeting_date=meeting_date, meeting_title=title or stem)
+def youtube_url(video_id: str, start_ts: float | None = None) -> str:
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    if start_ts is not None:
+        url += f"&t={int(start_ts)}s"
+    return url

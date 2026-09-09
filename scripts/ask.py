@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from anthropic import Anthropic
 
 from app.db.connection import get_db
+from app.rag.filenames import youtube_url
 from app.rag.retrieve import search_documents
 
 ANSWER_MODEL = "claude-sonnet-5"
@@ -32,7 +33,7 @@ outside knowledge."""
 
 def format_evidence(chunks) -> str:
     return "\n\n".join(
-        f"[{c.citation_id}] {c.city} - {c.meeting_title} ({c.meeting_date or 'date unknown'}), "
+        f"[{c.citation_id}] {c.city} - {c.title} (uploaded {c.upload_date or 'unknown'}), "
         f"{c.start_ts:.0f}s-{c.end_ts:.0f}s:\n{c.text}"
         for c in chunks
     )
@@ -70,8 +71,9 @@ def main() -> None:
 
     print("\n--- Sources ---")
     for c in chunks:
-        print(f"[{c.citation_id}] {c.city} - {c.meeting_title} ({c.meeting_date or 'unknown'}), "
-              f"{c.start_ts:.0f}s-{c.end_ts:.0f}s  (similarity {c.score:.3f})")
+        link = youtube_url(c.video_id, start_ts=c.start_ts) if c.video_id else "(no video id)"
+        print(f"[{c.citation_id}] {c.city} - {c.title} (uploaded {c.upload_date or 'unknown'}), "
+              f"{c.start_ts:.0f}s-{c.end_ts:.0f}s  (similarity {c.score:.3f})\n    {link}")
 
 
 if __name__ == "__main__":

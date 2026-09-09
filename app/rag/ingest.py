@@ -31,19 +31,20 @@ def ingest_file(db: sqlite3.Connection, path: Path, city: str) -> int:
         return 0
 
     chunks = chunk_transcript(lines)
-    meta = parse_filename(path.stem)
+    meta = parse_filename(path.name)
 
     vectors = embed_texts([c.text for c in chunks])
 
     for chunk, vector in zip(chunks, vectors):
         db.execute(
             """INSERT INTO chunks
-               (city, meeting_date, meeting_title, source_file, start_ts, end_ts, text, embedding)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (city, upload_date, title, video_id, source_file, start_ts, end_ts, text, embedding)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 city,
-                meta.meeting_date,
-                meta.meeting_title,
+                meta.upload_date,
+                meta.title,
+                meta.video_id,
                 source_file,
                 chunk.start_ts,
                 chunk.end_ts,
