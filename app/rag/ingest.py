@@ -63,12 +63,16 @@ def ingest_file(db: sqlite3.Connection, path: Path, city: str) -> int:
 
 def ingest_directory(db: sqlite3.Connection, raw_dir: Path) -> dict[str, int]:
     """Walk raw_dir/<city>/*.lrc and ingest everything found.
-    Returns {source_file: num_chunks_added} for files actually processed."""
+    Returns {source_file: num_chunks_added} for files actually processed.
+    Prints progress as it goes - embedding a long meeting on CPU can take
+    a while with no other feedback, and silence is easy to mistake for a hang."""
     results: dict[str, int] = {}
     for city_dir in sorted(p for p in raw_dir.iterdir() if p.is_dir()):
         city = city_dir.name
         for lrc_path in sorted(city_dir.glob("*.lrc")):
+            print(f"[{city}] {lrc_path.name} ...", end=" ", flush=True)
             added = ingest_file(db, lrc_path, city)
+            print(f"{added} chunks" if added else "skipped (already ingested, or empty)")
             if added:
                 results[str(lrc_path)] = added
     return results
