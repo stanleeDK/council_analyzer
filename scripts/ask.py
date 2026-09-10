@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
-from app.db.connection import get_db
+from app.db.connection import DB_PATH, get_db
 from app.rag.filenames import youtube_url
 from app.rag.retrieve import search_documents
 
@@ -45,9 +45,11 @@ def main() -> None:
     parser.add_argument("question")
     parser.add_argument("--city", default=None)
     parser.add_argument("--top-k", type=int, default=8)
+    parser.add_argument("--db", type=Path, default=DB_PATH,
+                         help="Database file to query (default: %(default)s)")
     args = parser.parse_args()
 
-    db = get_db()
+    db = get_db(args.db)
     chunks = search_documents(db, args.question, top_k=args.top_k, city=args.city)
 
     if not chunks:
