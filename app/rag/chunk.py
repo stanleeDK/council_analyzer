@@ -4,6 +4,11 @@ Raw caption lines are too small and fragment-y to embed individually.
 We merge consecutive lines up to a target word count, and keep the
 start/end timestamp the chunk spans so it can be cited (and, later,
 deep-linked into the source video).
+
+Optional overlap (as a fraction of chunk_words) repeats the tail of one
+chunk at the start of the next, so a phrase that would otherwise be
+split across a hard chunk boundary has a chance of appearing intact in
+at least one of the two chunks.
 """
 from __future__ import annotations
 
@@ -21,23 +26,33 @@ class Chunk:
     text: str
 
 
-def chunk_transcript(lines: list[TranscriptLine], chunk_words: int = DEFAULT_CHUNK_WORDS) -> list[Chunk]:
+def chunk_transcript(
+    lines: list[TranscriptLine],
+    chunk_words: int = DEFAULT_CHUNK_WORDS,
+    overlap_pct: float = 0.0,
+) -> list[Chunk]:
+    overlap_words = min(int(chunk_words * overlap_pct), chunk_words - 1)
+
     chunks: list[Chunk] = []
-    words: list[str] = []
-    start_ts: float | None = None
-    end_ts: float = 0.0
+    buffer: list[tuple[str, float]] = []  # (word, timestamp of the line it came from)
 
     for line in lines:
-        if start_ts is None:
-            start_ts = line.ts
-        words.extend(line.text.split())
-        end_ts = line.ts
-        if len(words) >= chunk_words:
-            chunks.append(Chunk(start_ts=start_ts, end_ts=end_ts, text=" ".join(words)))
-            words = []
-            start_ts = None
+        buffer.extend((word, line.ts) for word in line.text.split())
 
-    if words:
-        chunks.append(Chunk(start_ts=start_ts if start_ts is not None else end_ts, end_ts=end_ts, text=" ".join(words)))
+        while len(buffer) >= chunk_words:
+            entries = buffer[:chunk_words]
+            chunks.append(Chunk(
+                start_ts=entries[0][1],
+                end_ts=entries[-1][1],
+                text=" ".join(word for word, _ in entries),
+            ))
+            buffer = buffer[chunk_words - overlap_words:]
+
+    if buffer:
+        chunks.append(Chunk(
+            start_ts=buffer[0][1],
+            end_ts=buffer[-1][1],
+            text=" ".join(word for word, _ in buffer),
+        ))
 
     return chunks
