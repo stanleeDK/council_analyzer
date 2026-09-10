@@ -6,7 +6,11 @@ requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40",
     "pydantic>=2.0",
-    "sentence-transformers>=3.0",
+    # Capped below 3.0: newer releases now require torch>=2.5, which has no
+    # installable wheel on Intel Macs (PyTorch dropped Intel macOS builds
+    # around 2.3). The 2.x line's own dependency bounds pull an older,
+    # compatible transformers instead.
+    "sentence-transformers>=2.7.0,<3.0",
     "numpy>=1.26,<2",  # torch/sentence-transformers builds available for older Python aren't NumPy-2-compatible yet
     "python-dotenv>=1.0",
 ]

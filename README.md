@@ -83,3 +83,7 @@ docs/
 - **Retrieval is brute-force cosine similarity** in Python/numpy — fine for a
   corpus of a few thousand chunks (5-8 cities' worth of meetings), but would
   need a real vector index if the corpus grows much larger.
+- **`sentence-transformers` is capped below 3.0** (see `pyproject.toml`) because
+  newer releases require `torch>=2.5`, which has no installable wheel on Intel
+  Macs. If you're on Apple Silicon or Linux/Windows with a GPU, you can likely
+  drop this cap and use a newer release.
