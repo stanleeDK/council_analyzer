@@ -27,3 +27,21 @@ def test_ignores_header_lines():
     lines = parse_lrc_text(raw)
     assert len(lines) == 1
     assert lines[0].text == "hello"
+
+
+def test_strips_standalone_filler_words():
+    raw = "[00:01.60]um we can start with roll call um and uh then we vote\n"
+    lines = parse_lrc_text(raw)
+    assert lines[0].text == "we can start with roll call and then we vote"
+
+
+def test_leaves_words_containing_filler_letters_alone():
+    raw = "[00:01.60]duh that umbrella is uhmazing\n"
+    lines = parse_lrc_text(raw)
+    assert lines[0].text == "duh that umbrella is uhmazing"
+
+
+def test_drops_line_that_is_only_filler():
+    raw = "[00:01.60]um\n[00:02.00]actual content\n"
+    lines = parse_lrc_text(raw)
+    assert [l.text for l in lines] == ["actual content"]

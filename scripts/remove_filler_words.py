@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """Strip standalone verbal filler words (uh, um, uhh, umm, erm, ...) from raw
-LRC transcript files.
+LRC transcript files on disk.
+
+As of the parse_lrc.py update, ingestion already strips these same filler
+words in memory on every ingest (see app/rag/parse_lrc.py), so this script
+is no longer required for new ingests. It remains useful for permanently
+cleaning up the raw .lrc files themselves (e.g. before sharing them, or to
+shrink diffs when re-ingesting with different chunk settings).
 
 Only removes a token when it appears as its own word with whitespace (or
 line start/end) on both sides -- never as part of another word (e.g. "duh"
 or "yummy" are left untouched), and never when glued to punctuation (e.g.
-"uh," is left alone, since that's not "spaces on either side").
+"uh," is left alone, since that's not "spaces on either side"). Uses the
+same conservative filler word list and matching rule as parse_lrc.py.
 
 By default this is a dry run: it reports what *would* change without
 touching any files. Pass --apply to actually rewrite files (a .bak backup
@@ -26,19 +33,13 @@ from collections import Counter
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from app.rag.parse_lrc import _FILLER_RE  # noqa: E402  (needs sys.path set up first)
+
 RAW_DIR = REPO_ROOT / "data" / "raw"
 
 _LINE_RE = re.compile(r"^(\[\d{2}:\d{2}\.\d{2}\])(.*)$")
-
-# Conservative, unambiguous filler tokens only. Deliberately excludes words
-# like "like"/"so"/"right" that are also fillers in speech but are real,
-# legitimately-used words in plenty of sentences.
-FILLER_WORDS = ["uh", "uhh", "uhm", "um", "umm", "erm"]
-
-_FILLER_RE = re.compile(
-    r"(?<!\S)(" + "|".join(FILLER_WORDS) + r")(?!\S)",
-    re.IGNORECASE,
-)
 _WORD_RE = re.compile(r"\S+")
 
 
