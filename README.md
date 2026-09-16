@@ -1,89 +1,197 @@
 # Council Analyzer
 
-An agentic RAG system for analyzing city and county council meeting transcripts —
-built as a hands-on learning project. The full staged roadmap this repo follows
-lives in [`docs/PLATFORM_PLAN.md`](docs/PLATFORM_PLAN.md); this README covers
-what's actually implemented and how to run it.
+An agentic research platform over city and county council meeting transcripts.
+A question goes in; a plan, a set of searches, a draft, a verification pass, and
+a cited report come out — with a full trace of every model and tool call.
 
-## Data
+The staged roadmap this repo follows is [`docs/PLATFORM_PLAN.md`](docs/PLATFORM_PLAN.md).
+This README covers what is actually implemented and how to run it.
 
-Source data is YouTube auto-caption exports (`.lrc` format) of council/committee
-meetings across several cities and counties. Auto-caption exports repeat each
-caption line 2-3 times (an artifact of how the sliding caption window maps onto
-LRC's single-timestamp format) and carry **no speaker labels** — both handled
-(or noted as a known limitation) in the ingestion pipeline below.
-
-Organize raw files as:
+## What it does
 
 ```
-data/raw/<city_slug>/<meeting>.lrc
+question
+   ↓
+Planner ────────── decomposes into subquestions          (structured output)
+   ↓
+Researcher ─────── searches transcripts, decides when      (agent loop + tools)
+   ↓                to search again
+Data Analyst ───── writes read-only SQL, only if the       (agent loop + tools)
+   ↓                planner flagged the question as
+   ↓                quantitative
+Reporter ───────── drafts a cited answer
+   ↓
+Critic ─────────── checks every claim against the          (structured output)
+   ↓                evidence actually retrieved; may
+   ↓                trigger one more research pass
+Reporter ───────── revises per the critic's verdicts
+   ↓
+cited report + trace + cost
 ```
 
-City comes from the directory name since it isn't reliably present in the
-filenames themselves.
-
-## Current status
-
-- **Stage 1 — Structured planner**: `app/models/llm.py` (`make_plan`) — question → validated `ResearchPlan`.
-- **Stage 2 — RAG**: `app/rag/` — LRC parsing/dedup → chunking → local embeddings → SQLite storage → cosine retrieval → cited answers via `scripts/ask.py`.
-
-Nothing beyond this is wired up yet (no tool-calling agent loop, no critic, no Text2SQL) — see `docs/PLATFORM_PLAN.md` for what comes next.
+Each agent reads and writes one shared `TaskState`, so the critic can inspect
+what the researcher actually found and the reporter can only cite evidence that
+was really retrieved.
 
 ## Setup
 
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-cp .env.example .env   # then fill in ANTHROPIC_API_KEY
+cp .env.example .env    # add your ANTHROPIC_API_KEY
 ```
 
 Embeddings run locally via `sentence-transformers` (`all-MiniLM-L6-v2`) — no
-Anthropic embeddings API exists, and this avoids per-chunk API cost during
-ingestion. The model downloads from Hugging Face on first use, so you'll need
-normal internet access the first time you run ingestion.
+Anthropic embeddings API exists, and this keeps ingestion free. The model
+downloads from Hugging Face on first use.
 
-## Usage
+## Use cases
+
+### 1. Deep research (the main one)
+
+Plan → research → draft → verify → revise, with citations back to video timestamps.
 
 ```bash
-# 1. Ingest all .lrc files under data/raw/<city>/
-python3 scripts/ingest_documents.py
-
-# 2. Turn a question into a structured research plan (Stage 1, standalone)
-python3 scripts/plan.py "How has the city's or council's stance on immigration  changed?"
-
-# 3. Ask a question against the indexed transcripts and get a cited answer (Stage 2)
-python scripts/ask.py "What did the council decide about short-term rentals?"
-python scripts/ask.py "..." --city springfield --top-k 10
+python3 scripts/run_workflow.py "How has the council's stance on short-term rentals changed?"
+python3 scripts/run_workflow.py "..." --save-state runs/state.json --quiet
 ```
+
+### 2. Quantitative analysis (Text2SQL)
+
+No retrieval — the agent inspects a schema, writes read-only SQL, sanity-checks it.
+
+```bash
+python3 scripts/run_workflow.py "How many meetings did each city hold in 2026?" --workflow text2sql
+```
+
+### 3. Research with a human approval gate
+
+Same as deep research, but every SQL query stops and asks you first.
+
+```bash
+python3 scripts/run_workflow.py "..." --workflow research_with_approval
+```
+
+### 4. Single-pass RAG baseline
+
+Retrieve and answer in one shot — no agents. Useful as the control in experiments.
+
+```bash
+python3 scripts/ask.py "What did the council decide about short-term rentals?" --city "City of Green Bay"
+```
+
+## Getting from raw files to a running system
+
+```bash
+# 1. Ingest transcripts (data/raw/<city>/*.lrc)
+python3 scripts/ingest_documents.py
+python3 scripts/ingest_documents.py --chunk-words 180 --overlap 0.2 --db data/processed/exp.db
+
+# 2. Build the analytics DB the SQL agent queries (derived from the corpus)
+python3 scripts/seed_analytics_db.py
+
+# 3. Ask something
+python3 scripts/run_workflow.py "your question"
+
+# 4. See exactly what happened
+python3 scripts/show_trace.py            # list recent runs
+python3 scripts/show_trace.py <run_id>   # every model + tool call, with cost
+```
+
+## Measuring quality
+
+Retrieval is scored against hand-verified cases in `data/evals/retrieval_evals.json`.
+Ground truth is a *substring a correct passage must contain*, not a chunk ID —
+chunk IDs change whenever the corpus is re-chunked, so content-based truth is
+what makes a parameter sweep possible.
+
+```bash
+python3 scripts/run_evals.py                          # hit_rate + MRR for one corpus
+python3 scripts/run_evals.py --db data/processed/exp.db --top-k 10
+
+# Grid-search chunking against the evals (slow: re-embeds the corpus per point)
+python3 scripts/sweep_chunking.py --chunk-sizes 80 180 300 --overlaps 0 0.2
+```
+
+**Add more eval cases.** Five cases prove almost nothing; 15-30 across different
+cities and question styles is the minimum for tuning against.
+
+## Configuration — what makes this a platform
+
+Workflows are data, not code. `workflows/*.yaml` sets the step sequence, per-agent
+model routing, per-agent tool permissions, approval gates and budgets. The same
+runtime serves all three shipped workflows:
+
+```yaml
+steps: [plan, research, data_analysis, draft, critique, revise]
+
+models:
+  planner: claude-haiku-4-5      # cheap model for structured decomposition
+  default: claude-sonnet-5
+
+tools:                            # least privilege: researcher can't touch SQL
+  researcher: [search_transcripts]
+  data_analyst: [get_schema, run_readonly_sql, calculate]
+
+approvals:
+  run_readonly_sql: always        # <- flip to gate this tool behind a human
+
+limits:
+  max_tool_calls: 25
+  max_cost_usd: 1.00
+```
+
+Adding a workflow means adding a YAML file. No runtime changes.
 
 ## Project layout
 
 ```
 app/
-  models/       # Stage 1: Pydantic schemas + structured-output planner call
-  rag/          # Stage 2: parse_lrc, chunk, embed, ingest, retrieve
-  db/           # SQLite schema + connection
-scripts/        # CLI entry points
+  runtime/        agent loop, workflow engine, policy, budgets, approvals, state
+  agents/         planner, researcher, data_analyst, critic, reporter
+  tools/          search_transcripts, run_readonly_sql, get_schema, calculate
+  rag/            parse_lrc, chunk, embed, ingest, retrieve
+  db/             corpus schema/connection + derived analytics DB
+  evaluation/     retrieval metrics, eval runner, parameter sweep
+  observability/  trace recording
+workflows/        deep_research, text2sql, research_with_approval
+scripts/          CLI entry points
 data/
-  raw/          # <city>/<meeting>.lrc source files (gitignored contents)
-  processed/    # council.db (gitignored)
-  evals/        # hand-written eval question sets (Stage 7, not yet built)
-tests/
-docs/
-  PLATFORM_PLAN.md   # full staged roadmap (Stage 1 through platform-ification)
+  raw/            <city>/<meeting>.lrc  (gitignored)
+  processed/      corpus, analytics and trace databases (gitignored)
+  evals/          hand-verified eval cases
 ```
+
+## Safety and controls
+
+- **Least privilege** — an agent can only call tools its workflow grants it.
+  A denied call comes back as a readable error the model can react to, not a crash.
+- **Read-only SQL** — the analytics DB is opened `mode=ro`, and SQL is additionally
+  validated (single statement, SELECT/WITH only, forbidden keywords, injected LIMIT,
+  query timeout) so the model gets clear errors instead of opaque failures.
+- **No code execution** — `calculate` walks the Python AST and permits only
+  arithmetic; `eval()` is never used on model output.
+- **Budgets** — per-run caps on tool calls, model calls and dollar cost, enforced
+  before each call. Exceeding one ends the run cleanly.
+- **Human approval** — any tool can be gated behind a terminal prompt via config.
+- **Untrusted corpus** — transcripts are treated as data. Agents are instructed to
+  cite only retrieved passages and never to act on instructions found inside them.
 
 ## Known limitations
 
 - **No speaker attribution.** Auto-captions don't identify who's speaking, so
-  "what did council member X say" currently can't be answered — only "what was
-  said." Revisit if per-speaker diarization becomes available.
-- **Filename metadata is best-effort.** `app/rag/filenames.py` heuristically
-  extracts a date and title from filenames; there's no reliable standard across
-  sources, so verify metadata after ingesting a new city's files.
-- **Retrieval is brute-force cosine similarity** in Python/numpy — fine for a
-  corpus of a few thousand chunks (5-8 cities' worth of meetings), but would
-  need a real vector index if the corpus grows much larger.
-- **`sentence-transformers` is capped below 3.0** (see `pyproject.toml`) because
-  newer releases require `torch>=2.5`, which has no installable wheel on Intel
-  Macs. If you're on Apple Silicon or Linux/Windows with a GPU, you can likely
-  drop this cap and use a newer release.
+  "what did council member X say" can't be answered — only "what was said."
+- **Retrieval misses rare proper nouns.** Dense embeddings dilute a short distinctive
+  phrase inside a long procedural chunk. `eval_001` documents a real, reproducible
+  miss. Hybrid keyword + vector search is the likely fix and is not built yet.
+- **Chunking is word-count based**, with no awareness of agenda-item boundaries, so a
+  chunk can straddle two unrelated topics.
+- **The analytics DB covers meeting coverage, not outcomes** — which meetings were
+  recorded, when, how long. It has no votes or motions; the data agent is told to say
+  so rather than approximate.
+- **Retrieval is brute-force cosine similarity** in numpy — fine for thousands of
+  chunks, would need a real vector index beyond that.
+- **The critic is another probabilistic model**, not an oracle. Its verdicts are
+  recorded in the trace so a human can disagree.
+- **`sentence-transformers` is capped below 3.0** because newer releases require
+  `torch>=2.5`, which has no Intel-Mac wheel. Drop the cap on Apple Silicon or Linux.

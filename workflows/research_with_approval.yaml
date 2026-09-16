@@ -1,0 +1,35 @@
+name: research_with_approval
+
+# Identical to deep_research except that SQL execution requires a human
+# to approve each query at the terminal. Autonomy is a config choice,
+# not a property of the model.
+steps:
+  - plan
+  - research
+  - data_analysis
+  - draft
+  - critique
+  - revise
+
+models:
+  default: claude-sonnet-5
+  planner: claude-haiku-4-5
+
+tools:
+  researcher:
+    - search_transcripts
+  data_analyst:
+    - get_schema
+    - run_readonly_sql
+    - calculate
+
+approvals:
+  search_transcripts: never
+  get_schema: never
+  run_readonly_sql: always   # <- gated
+  calculate: never
+
+limits:
+  max_tool_calls: 25
+  max_model_calls: 30
+  max_cost_usd: 1.00

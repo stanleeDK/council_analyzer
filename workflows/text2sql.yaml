@@ -1,0 +1,29 @@
+name: text2sql
+
+# Same runtime, different application: no retrieval, no critic - just
+# schema inspection, SQL, and a written answer. This is the evidence
+# that the runtime is reusable rather than hardcoded for one use case.
+steps:
+  - data_analysis
+  - draft
+
+models:
+  default: claude-sonnet-5
+  data_analyst: claude-sonnet-5
+  reporter: claude-sonnet-5
+
+tools:
+  data_analyst:
+    - get_schema
+    - run_readonly_sql
+    - calculate
+
+approvals:
+  get_schema: never
+  run_readonly_sql: never
+  calculate: never
+
+limits:
+  max_tool_calls: 12
+  max_model_calls: 15
+  max_cost_usd: 0.50

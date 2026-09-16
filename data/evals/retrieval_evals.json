@@ -1,0 +1,56 @@
+{
+  "_README": [
+    "Hand-verified retrieval test cases. Ground truth is a substring that a correctly",
+    "retrieved passage must contain - NOT a chunk ID, because chunk IDs change every",
+    "time the corpus is re-chunked, and these cases have to survive a parameter sweep.",
+    "",
+    "Fields:",
+    "  id              - stable identifier",
+    "  question        - the query, phrased how a user would actually ask it",
+    "  expect_any_of   - case-insensitive substrings; ANY match counts as a hit",
+    "                    (use several spellings - auto-captions mishear proper nouns)",
+    "  city            - optional exact city filter to apply during retrieval",
+    "  expect_no_match - true for negative cases: the corpus should NOT cover this,",
+    "                    and 'hit' means correctly returning nothing relevant",
+    "  note            - why you know the ground truth; keep this honest",
+    "",
+    "ADD MORE CASES. One case proves nothing - 15-30 spanning several cities,",
+    "question styles and difficulty levels is the minimum for tuning against."
+  ],
+  "cases": [
+    {
+      "id": "eval_001_landusi_named_event",
+      "question": "What events, fests or festivals did the city of Green Bay consider permits for?",
+      "expect_any_of": ["landusi", "anduisi"],
+      "city": "City of Green Bay",
+      "note": "Verified by hand in the 3-22-21 Protection & Policy Committee transcript: a request to extend licensed premises to hold the fifth annual 'landusi fest'. Auto-captions render the club name inconsistently ('anduisi' / 'landusi'), hence two spellings. This case is currently a MISS - it is the failure that motivated the eval harness."
+    },
+    {
+      "id": "eval_002_landusi_literal",
+      "question": "landusi fest",
+      "expect_any_of": ["landusi", "anduisi"],
+      "city": "City of Green Bay",
+      "note": "Same passage, but a short literal query instead of a natural question. Isolates whether compound phrasing is what breaks retrieval, or whether the passage is unreachable either way."
+    },
+    {
+      "id": "eval_003_noise_ordinance_waiver",
+      "question": "Did an applicant request a waiver of the noise ordinance?",
+      "expect_any_of": ["noise ordinance"],
+      "city": "City of Green Bay",
+      "note": "Same meeting, different angle - the staff comment mentions the applicant asking for a noise ordinance waiver. Tests whether the surrounding discussion is reachable even when the event name isn't."
+    },
+    {
+      "id": "eval_004_roll_call_procedure",
+      "question": "How does a committee meeting begin - roll call and attendance?",
+      "expect_any_of": ["roll call"],
+      "note": "Easy positive control. Roll call appears in essentially every meeting; if this misses, something is broken at the pipeline level, not the ranking level."
+    },
+    {
+      "id": "eval_005_negative_control",
+      "question": "What did the council decide about the Mars colony landing site lease?",
+      "expect_any_of": ["mars colony"],
+      "expect_no_match": true,
+      "note": "Negative control: nothing in a Wisconsin council corpus should match. Passing means the retriever did not surface a spurious 'relevant' passage. Note that vector search always returns SOMETHING - this case checks the content, not the count."
+    }
+  ]
+}

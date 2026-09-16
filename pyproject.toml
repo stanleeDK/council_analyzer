@@ -13,6 +13,7 @@ dependencies = [
     "sentence-transformers>=2.7.0,<3.0",
     "numpy>=1.26,<2",  # torch/sentence-transformers builds available for older Python aren't NumPy-2-compatible yet
     "python-dotenv>=1.0",
+    "pyyaml>=6.0",
 ]
 
 [tool.setuptools.packages.find]
