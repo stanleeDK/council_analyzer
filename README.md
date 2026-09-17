@@ -1,8 +1,15 @@
 # Council Analyzer
 
-An agentic research platform over city and county council meeting transcripts.
-A question goes in; a plan, a set of searches, a draft, a verification pass, and
-a cited report come out — with a full trace of every model and tool call.
+**A personal project built to learn and experiment with multi-agent orchestration,
+RAG, tool use, evaluation and agent controls.** The domain — city and county council
+meeting transcripts — was chosen because it's messy, real, and publicly available:
+auto-generated captions with no speaker labels, misheard proper nouns, and hours of
+procedural filler around the parts that matter.
+
+A question goes in; a plan, a set of searches, a draft, a verification pass, and a
+cited report come out — with a full trace of every model and tool call.
+
+**Built with:** Python · Anthropic API (Claude) · Pydantic · sentence-transformers · SQLite
 
 The staged roadmap this repo follows is [`docs/PLATFORM_PLAN.md`](docs/PLATFORM_PLAN.md).
 This README covers what is actually implemented and how to run it.
@@ -32,6 +39,63 @@ cited report + trace + cost
 Each agent reads and writes one shared `TaskState`, so the critic can inspect
 what the researcher actually found and the reporter can only cite evidence that
 was really retrieved.
+
+## Example run
+
+<!-- TODO(stanley): replace the two blocks below with real captured output.
+     Capture with:
+       python3 scripts/run_workflow.py "How has the council's stance on short-term rentals changed?" | tee /tmp/run.txt
+       python3 scripts/show_trace.py <run_id> | tee /tmp/trace.txt
+     Keep it short — trim the report to a Summary + 2-3 findings, and the trace
+     to the step list. Do not paste anything not actually produced by a run. -->
+
+> **Note:** this section is a placeholder pending a captured run. Everything below
+> is illustrative structure, not real output.
+
+**Question:** *"How has the council's stance on short-term rentals changed?"*
+
+```
+── plan ──
+  [planner] model claude-haiku-4-5 — 1.2s / $0.0004
+── research ──
+  [researcher] tool  search_transcripts({"query": "short-term rental ordinance"})
+  [researcher] tool  search_transcripts({"query": "Airbnb licensing complaints"})
+── draft ──
+── critique ──
+   critic requested 1 follow-up search
+── revise ──
+── done ── 8 model calls, 5 tool calls, $0.08 / 31s (status: complete)
+```
+
+```markdown
+## Summary
+The council moved from exploratory discussion toward a licensing framework [C412],
+though no ordinance had passed as of the most recent indexed meeting [C588].
+
+## Evidence Gaps and Uncertainties
+No transcript covers the committee session referenced in [C588], so the outcome
+of that referral is unknown.
+
+## Sources
+[C412] City of Green Bay — Protection & Policy, 2025-04-15, 1240s–1310s
+[C588] City of Green Bay — Common Council, 2026-02-03, 880s–944s
+```
+
+The SQL guardrails need no API key, so these are verbatim from `app/tools/sql.py`:
+
+```
+>>> run_readonly_sql({"sql": "DELETE FROM meetings"})
+SQL rejected: only SELECT/WITH queries are allowed, got 'DELETE'
+
+>>> run_readonly_sql({"sql": "SELECT 1; DROP TABLE meetings"})
+SQL rejected: multiple statements are not allowed; submit one SELECT at a time
+
+>>> run_readonly_sql({"sql": "SELECT nonexistent FROM meetings"})
+SQL error: OperationalError: no such column: nonexistent
+```
+
+The last one matters as much as the rejections: a failed query comes back as text
+the model can read and correct, rather than crashing the run.
 
 ## Setup
 
@@ -98,7 +162,10 @@ python3 scripts/show_trace.py            # list recent runs
 python3 scripts/show_trace.py <run_id>   # every model + tool call, with cost
 ```
 
-## Measuring quality
+## Retrieval evaluation
+
+This measures the **retriever**, not the final generated report. Answer quality,
+groundedness and citation correctness are not yet scored — see Known limitations.
 
 Retrieval is scored against hand-verified cases in `data/evals/retrieval_evals.json`.
 Ground truth is a *substring a correct passage must contain*, not a chunk ID —
