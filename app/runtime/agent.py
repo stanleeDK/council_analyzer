@@ -28,6 +28,16 @@ from app.tools.base import ToolContext, ToolRegistry
 MAX_ITERATIONS = 12
 
 
+class StructuredOutputError(RuntimeError):
+    """A structured call came back without a valid object.
+
+    Almost always truncation: the model hit max_tokens mid-JSON, so schema
+    validation produced nothing. Raised instead of returning None so the
+    failure names its own cause rather than surfacing as an AttributeError
+    three frames away.
+    """
+
+
 @dataclass
 class AgentResult:
     text: str
@@ -128,7 +138,25 @@ class Agent:
             cost_usd=cost, latency_ms=timer.ms,
             output_preview=str(response.parsed_output)[:500],
         )
-        return response.parsed_output
+
+        parsed = getattr(response, "parsed_output", None)
+        if parsed is None:
+            raise StructuredOutputError(self._structured_failure(response, output_format))
+        return parsed
+
+    def _structured_failure(self, response, output_format) -> str:
+        stop = getattr(response, "stop_reason", None) or "unknown"
+        message = (
+            f"{self.spec.name}: the model returned no valid {output_format.__name__} "
+            f"(stop_reason={stop})."
+        )
+        if stop == "max_tokens":
+            message += (
+                f" The response was cut off mid-JSON at max_tokens={self.spec.max_tokens}. "
+                "Either raise this agent's max_tokens or ask it for fewer items per call."
+            )
+        self.tracer.record("error", agent=self.spec.name, error=message)
+        return message
 
     # -- internals -------------------------------------------------------
 

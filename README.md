@@ -40,6 +40,14 @@ Each agent reads and writes one shared `TaskState`, so the critic can inspect
 what the researcher actually found and the reporter can only cite evidence that
 was really retrieved.
 
+The critic's input is deliberately asymmetric: it gets the **complete** list of
+valid citation IDs (detecting a *fabricated* `[C###]` is impossible without
+knowing the whole valid set) but full passage text only for what the draft
+actually cites — typically a handful out of dozens retrieved. Its verdicts are
+emitted in batches split on the draft's own headings, because verdict count
+scales with the draft, and a long draft otherwise truncates the response
+mid-JSON.
+
 ## Example run
 
 <!-- TODO(stanley): replace the two blocks below with real captured output.
