@@ -15,12 +15,28 @@ from app.runtime.state import Evidence, TaskState
 
 # -- helpers --------------------------------------------------------------
 
+class RecordingTracer:
+    """Captures what an agent chose to show its work with."""
+
+    def __init__(self):
+        self.notes = []
+
+    def record(self, kind, agent="", output_preview="", **kwargs):
+        if kind == "note":
+            self.notes.append(output_preview)
+
+
 class RecordingAgent:
     """Stands in for Agent: records prompts, returns queued reports."""
 
     def __init__(self, reports):
         self._reports = list(reports)
         self.prompts = []
+        self.tracer = RecordingTracer()
+
+    @property
+    def notes(self):
+        return self.tracer.notes
 
     def run_structured(self, prompt, output_format):
         self.prompts.append(prompt)
@@ -302,3 +318,81 @@ def test_non_truncation_failure_reports_its_own_stop_reason(tmp_path):
 
     with pytest.raises(StructuredOutputError, match="stop_reason=refusal"):
         agent.run_structured("prompt", CriticReport)
+
+
+# -- showing its work -----------------------------------------------------
+
+def test_note_tallies_verdicts_by_status():
+    state = TaskState(objective="o", workflow="w")
+    state.add_evidence([_evidence("C1", "T1")])
+    state.draft = "## Summary\nThree claims [C1]."
+    agent = RecordingAgent([_report(
+        _verdict("a", "supported"),
+        _verdict("b", "partially_supported"),
+        _verdict("c", "unsupported"),
+    )])
+
+    critic.run(agent, state)
+
+    note = agent.notes[0]
+    assert "3 claims checked" in note
+    assert "1 supported" in note and "1 partial" in note and "1 unsupported" in note
+
+
+def test_note_lists_only_the_claims_that_are_not_clean():
+    state = TaskState(objective="o", workflow="w")
+    state.add_evidence([_evidence("C1", "T1")])
+    state.draft = "## Summary\nClaims [C1]."
+    agent = RecordingAgent([_report(
+        _verdict("BORING SUPPORTED CLAIM", "supported"),
+        _verdict("SUSPECT CLAIM", "unsupported"),
+    )])
+
+    critic.run(agent, state)
+
+    note = agent.notes[0]
+    assert "SUSPECT CLAIM" in note          # the one about to change the report
+    assert "BORING SUPPORTED CLAIM" not in note
+
+
+def test_note_reports_follow_up_queries():
+    state = TaskState(objective="o", workflow="w")
+    state.draft = "## Summary\nThin."
+    agent = RecordingAgent([_report(needs_more=True, queries=["landusi fest"])])
+
+    critic.run(agent, state)
+    assert "follow-ups: landusi fest" in agent.notes[0]
+
+
+def test_note_mentions_batching_only_when_batched():
+    single = TaskState(objective="o", workflow="w")
+    single.draft = "## Summary\nShort."
+    agent = RecordingAgent([_report(_verdict("a"))])
+    critic.run(agent, single)
+    assert "across" not in agent.notes[0]
+
+    long_state = TaskState(objective="o", workflow="w")
+    long_state.draft = "\n\n".join(f"## S{i}\n" + "word " * 500 for i in range(3))
+    batched = RecordingAgent([_report(_verdict("a")) for _ in range(6)])
+    critic.run(batched, long_state)
+    assert f"across {len(batched.prompts)} batches" in batched.notes[0]
+
+
+def test_empty_draft_still_says_why_nothing_happened():
+    state = TaskState(objective="o", workflow="w")
+    state.draft = ""
+    agent = RecordingAgent([])
+
+    critic.run(agent, state)
+    assert agent.notes and "nothing to verify" in agent.notes[0]
+
+
+def test_unknown_verdict_status_does_not_crash_the_tally():
+    """The status field is a free-text string from the model, not an enum."""
+    state = TaskState(objective="o", workflow="w")
+    state.draft = "## Summary\nClaim."
+    agent = RecordingAgent([_report(_verdict("odd one", status="inconclusive"))])
+
+    critic.run(agent, state)
+    assert "1 claim checked" in agent.notes[0]
+    assert "inconclusive" in agent.notes[0]     # listed, since it is not 'supported'

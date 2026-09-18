@@ -29,7 +29,7 @@ from app.agents import data_analyst as data_agent
 from app.agents import planner as planner_agent
 from app.agents import reporter as reporter_agent
 from app.agents import researcher as researcher_agent
-from app.observability.traces import Tracer, get_trace_db
+from app.observability.traces import Tracer, get_trace_db, plural
 from app.runtime.agent import Agent
 from app.runtime.approval import Approver, AutoApprover
 from app.runtime.budget import Budget
@@ -193,7 +193,8 @@ class WorkflowRunner:
             # bounded re-research: exactly one extra pass, only if the critic asked
             if report.needs_more_research and report.follow_up_queries:
                 if self.echo:
-                    print(f"   critic requested {len(report.follow_up_queries)} follow-up searches")
+                    print("   critic requested "
+                          f"{plural(len(report.follow_up_queries), 'follow-up search', 'follow-up searches')}")
                 follow_up = researcher_agent.run(
                     self._agent(researcher_agent.spec(
                         cfg.model_for("researcher"), self.policy.tools_for("researcher")), tracer),

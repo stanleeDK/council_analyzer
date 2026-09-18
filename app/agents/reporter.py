@@ -7,6 +7,9 @@ Separated from research so the model doing synthesis can't quietly
 """
 from __future__ import annotations
 
+import re
+
+from app.observability.traces import clip
 from app.runtime.agent import Agent, AgentSpec
 from app.runtime.state import TaskState
 
@@ -59,6 +62,9 @@ def draft(agent: Agent, state: TaskState, research_notes: str) -> str:
 
     result = agent.run("\n".join(sections))
     state.draft = result.text
+
+    agent.tracer.record("note", agent="reporter", output_preview=_summary(
+        "draft", result.text, len(state.evidence)))
     state.notes.append(f"reporter: draft written ({len(result.text)} chars)")
     return result.text
 
@@ -66,6 +72,8 @@ def draft(agent: Agent, state: TaskState, research_notes: str) -> str:
 def revise(agent: Agent, state: TaskState) -> str:
     """Apply the critic's verdicts. If the critic found nothing, the draft stands."""
     if not state.claim_checks:
+        agent.tracer.record("note", agent="reporter",
+                            output_preview="no verdicts to apply \u2014 the draft stands as final")
         state.final_report = state.draft
         return state.final_report
 
@@ -85,5 +93,26 @@ def revise(agent: Agent, state: TaskState) -> str:
     )
     result = agent.run(prompt)
     state.final_report = result.text
+
+    agent.tracer.record("note", agent="reporter", output_preview=_summary(
+        "final", result.text, len(state.evidence),
+        extra=f"applied {len(state.claim_checks)} verdicts "
+              f"({len(state.unsupported_claims())} unsupported)"))
     state.notes.append(f"reporter: revised after {len(state.unsupported_claims())} unsupported claims")
     return result.text
+
+
+def _summary(label: str, text: str, evidence_count: int, extra: str = "") -> str:
+    """Shape of what was written: sections, length, and how many distinct
+    passages it actually cites. A report citing 2 of 60 retrieved passages is
+    worth noticing."""
+    headings = [line.lstrip("# ").strip() for line in text.splitlines()
+                if line.startswith("#")]
+    cited = len(set(re.findall(r"\[(C\d+)\]", text)))
+    parts = [f"{label}: {len(text)} chars \u00b7 cites {cited}/{evidence_count} passages"]
+    if extra:
+        parts.append(extra)
+    lines = [" \u00b7 ".join(parts)]
+    if headings:
+        lines.append("sections: " + clip(" | ".join(headings), 160))
+    return "\n".join(lines)

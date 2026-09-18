@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 
 from app.models.schemas import CriticReport
+from app.observability.traces import clip, plural
 from app.runtime.agent import Agent, AgentSpec
 from app.runtime.state import ClaimCheck, Evidence, TaskState
 
@@ -74,6 +75,8 @@ def run(agent: Agent, state: TaskState) -> CriticReport:
     segments = split_draft(state.draft)
     if not segments:
         state.claim_checks = []
+        agent.tracer.record("note", agent="critic",
+                            output_preview="draft was empty \u2014 nothing to verify")
         state.notes.append("critic: draft was empty, nothing to verify")
         return CriticReport(verdicts=[], needs_more_research=False, follow_up_queries=[])
 
@@ -92,11 +95,35 @@ def run(agent: Agent, state: TaskState) -> CriticReport:
         ClaimCheck(claim=v.claim, status=v.status, reason=v.reason, action=v.action)
         for v in report.verdicts
     ]
+    agent.tracer.record("note", agent="critic",
+                        output_preview=_summary(report, len(segments)))
     unsupported = len(state.unsupported_claims())
     state.notes.append(f"critic: {len(report.verdicts)} claims checked across {len(segments)} "
                        f"batch(es), {unsupported} unsupported, "
                        f"needs_more_research={report.needs_more_research}")
     return report
+
+
+def _summary(report: CriticReport, batches: int) -> str:
+    """Tallies, then every claim that is not clean.
+
+    Supported claims are the boring majority; listing them would bury the
+    handful that are about to change the final report.
+    """
+    counts = {"supported": 0, "partially_supported": 0, "unsupported": 0}
+    for verdict in report.verdicts:
+        counts[verdict.status] = counts.get(verdict.status, 0) + 1
+    batch_note = f" across {batches} batches" if batches > 1 else ""
+    lines = [f"{plural(len(report.verdicts), 'claim')} checked{batch_note} \u00b7 "
+             f"{counts['supported']} supported, "
+             f"{counts['partially_supported']} partial, "
+             f"{counts['unsupported']} unsupported"]
+
+    flagged = [v for v in report.verdicts if v.status != "supported"]
+    lines += [f"\u00b7 [{v.status}] {clip(v.claim, 110)}" for v in flagged]
+    if report.follow_up_queries:
+        lines.append("follow-ups: " + ", ".join(report.follow_up_queries))
+    return "\n".join(lines)
 
 
 # -- prompt construction --------------------------------------------------

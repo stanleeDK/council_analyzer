@@ -7,6 +7,7 @@ sanity-checks what comes back.
 """
 from __future__ import annotations
 
+from app.observability.traces import clip, plural
 from app.runtime.agent import Agent, AgentSpec
 from app.runtime.state import TaskState
 
@@ -40,5 +41,12 @@ def run(agent: Agent, state: TaskState) -> str:
     )
     result = agent.run(prompt)
     state.sql_results.append({"question": state.objective, "answer": result.text})
+
+    # The SQL itself already echoes as tool calls; the conclusion drawn from it
+    # does not.
+    agent.tracer.record("note", agent="data_analyst", output_preview=(
+        f"{plural(result.tool_calls, 'query', 'queries')} \u00b7 "
+        f"stopped: {result.stopped_because}\n"
+        f"\u00b7 {clip(result.text, 260) or '(no answer text)'}"))
     state.notes.append(f"data_analyst: {result.tool_calls} queries, stopped={result.stopped_because}")
     return result.text

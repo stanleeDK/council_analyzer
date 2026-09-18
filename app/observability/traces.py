@@ -51,6 +51,28 @@ CREATE TABLE IF NOT EXISTS trace_runs (
 
 DEFAULT_TRACE_PATH = Path(__file__).resolve().parents[2] / "data" / "processed" / "traces.db"
 
+# Notes are how an agent shows its work, so they echo in full rather than as a
+# one-line preview. Still bounded: a runaway note shouldn't own the terminal.
+NOTE_ECHO_LIMIT = 1000
+
+
+def plural(count: int, singular: str, plural_form: str | None = None) -> str:
+    """'1 search', '2 searches' - small thing, but the output is read a lot.
+
+    Takes the plural form rather than a suffix: English has too many words
+    like 'query' for suffix-appending to be safe.
+    """
+    word = singular if count == 1 else (plural_form or singular + "s")
+    return f"{count} {word}"
+
+
+def clip(text: str, limit: int) -> str:
+    """Collapse whitespace to one line, cutting on a word boundary."""
+    flat = " ".join(text.split())
+    if len(flat) <= limit:
+        return flat
+    return flat[:limit].rsplit(" ", 1)[0] + "\u2026"
+
 
 def get_trace_db(path: Path = DEFAULT_TRACE_PATH) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -128,7 +150,16 @@ class Tracer:
         elif kind == "error":
             print(f"{prefix} ERROR {error}")
         elif kind == "note" and output_preview:
-            print(f"{prefix} {output_preview[:200]}")
+            self._echo_note(prefix, output_preview)
+
+    @staticmethod
+    def _echo_note(prefix: str, text: str) -> None:
+        """Print a multi-line note, aligning continuation lines under the first."""
+        lines = text[:NOTE_ECHO_LIMIT].splitlines() or [""]
+        print(f"{prefix} {lines[0]}")
+        padding = " " * (len(prefix) + 1)
+        for line in lines[1:]:
+            print(f"{padding}{line}")
 
 
 class Timer:

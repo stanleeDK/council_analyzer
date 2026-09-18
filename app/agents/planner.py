@@ -8,6 +8,7 @@ not a reasoning-heavy one.
 from __future__ import annotations
 
 from app.models.schemas import ResearchPlan
+from app.observability.traces import clip
 from app.runtime.agent import Agent, AgentSpec
 from app.runtime.state import TaskState
 
@@ -37,6 +38,23 @@ def run(agent: Agent, state: TaskState) -> ResearchPlan:
     state.subquestions = plan.subquestions
     state.relevant_cities = plan.relevant_cities
     state.needs_quantitative_data = plan.needs_quantitative_data
+    agent.tracer.record("note", agent="planner", output_preview=_summary(plan))
     state.notes.append(f"planner: {len(plan.subquestions)} subquestions, "
                        f"quantitative={plan.needs_quantitative_data}")
     return plan
+
+
+def _summary(plan: ResearchPlan) -> str:
+    """What the planner decided, in the form a human checks it in.
+
+    A misread objective or a wrongly-set quantitative flag sends every later
+    step down the wrong path, so this is the cheapest place to catch one.
+    """
+    cities = ", ".join(plan.relevant_cities) or "all jurisdictions"
+    lines = [
+        f"objective: {clip(plan.objective, 160)}",
+        f"cities: {cities} \u00b7 quantitative: "
+        f"{'yes' if plan.needs_quantitative_data else 'no'}",
+    ]
+    lines += [f"{i}. {clip(q, 150)}" for i, q in enumerate(plan.subquestions, 1)]
+    return "\n".join(lines)
