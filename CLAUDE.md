@@ -10,8 +10,12 @@ project for learning multi-agent orchestration, tool use, evals and agent contro
 
 ## Environment
 
-- **Use `python3`, never `python`** — `python` is Python 2.7 on the dev machine.
-- Work inside the venv: `source .venv/bin/activate`.
+- **Activate the venv first:** `source .venv/bin/activate`. Inside it, `python` is
+  the project's Python 3.12 and is the normal thing to type.
+- Outside the venv, `python` is Python 2.7 on the dev machine and dies on modern
+  syntax. The commands below say `python3` because that at least gets a Python 3 if
+  someone forgets to activate — but activation is the real requirement, since the
+  system Python 3 has none of the dependencies.
 - `pip install -e .` fails here (PEP 660). Install dependencies directly instead;
   the scripts already `sys.path.insert`, so an editable install isn't needed.
 - `sentence-transformers` is pinned `<3.0` and `numpy` `<2`. **Do not bump either.**
