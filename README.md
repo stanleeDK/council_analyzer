@@ -50,44 +50,96 @@ mid-JSON.
 
 ## Example run
 
-<!-- TODO(stanley): replace the two blocks below with real captured output.
-     Capture with:
-       python3 scripts/run_workflow.py "How has the council's stance on short-term rentals changed?" | tee /tmp/run.txt
-       python3 scripts/show_trace.py <run_id> | tee /tmp/trace.txt
-     Keep it short — trim the report to a Summary + 2-3 findings, and the trace
-     to the step list. Do not paste anything not actually produced by a run. -->
-
-> **Note:** this section is a placeholder pending a captured run. Everything below
-> is illustrative structure, not real output.
-
-**Question:** *"How has the council's stance on short-term rentals changed?"*
+A real run asking what event and festival permits four Wisconsin councils
+(Green Bay, Madison, Kenosha, Racine) discussed. Trimmed for length — every line
+below is verbatim from the run, with elisions marked.
 
 ```
 ── plan ──
-  [planner] model claude-haiku-4-5 — 1.2s / $0.0004
+  [planner] model claude-haiku-4-5 — 2.7s / $0.0012
+  [planner] objective: Identify all events, festivals, or fests that city and county councils discussed permit applications or decisions for across their meetings.
+            cities: all jurisdictions · quantitative: no
+            1. What specific events, festivals, or fests were mentioned in council meetings when discussing permit applications?
+            2. What decisions did councils make regarding permits for festivals or public events?
+            3. Were there any recurring annual events or festivals that councils approved permits for?
+            4. What conditions or requirements did councils place on event permits?
+            5. Which departments or staff presented information about event permit requests to councils?
+
 ── research ──
-  [researcher] tool  search_transcripts({"query": "short-term rental ordinance"})
-  [researcher] tool  search_transcripts({"query": "Airbnb licensing complaints"})
+  [researcher] tool  search_transcripts({"query": "special event permit festival application council"}) — 22.3s
+  [researcher] tool  search_transcripts({"query": "Oktoberfest permit"}) — 12.4s
+  [researcher] tool  search_transcripts({"query": "Salmon-A-Rama Racine event"}) — 12.0s
+  ... 11 more searches ...
+  [researcher] 14 searches → 92 new passages (92 total) · stopped: end_turn
+
+── data_analysis ──
+  [data_analyst] skipped: planner judged question non-quantitative
+
 ── draft ──
+  [reporter] draft: 3874 chars · cites 33/92 passages
+             sections: Summary | Key Findings | Evidence Gaps and Uncertainties | Sources
+
 ── critique ──
-   critic requested 1 follow-up search
+  [critic] 30 claims checked across 3 batches · 27 supported, 1 partial, 2 unsupported
+           · [unsupported] Across the four cities' councils (Green Bay, Madison, Kenosha, Racine), event/festival permit discussions…
+           · [unsupported] Most permit actions were conditional approvals tied to separate sign-offs (special event permits, street-use…
+           · [partially_supported] Proposed Designated Outdoor Refreshment Area (Dora) tied to downtown events [C12345]
+           follow-ups: Green Bay council special event permit conditional approval DPW, Madison council festival permit noise variance, …
+   critic requested 4 follow-up searches
+  [researcher] 13 searches → 39 new passages (131 total) · stopped: end_turn
+
 ── revise ──
-── done ── 8 model calls, 5 tool calls, $0.08 / 31s (status: complete)
+  [reporter] final: 4945 chars · cites 33/131 passages · applied 30 verdicts (2 unsupported)
+             sections: Summary | Key Findings | Evidence Gaps and Uncertainties | Sources
+
+── done ── 16 model calls, 25 tool calls, 305746 in / 19005 out tokens, $0.8003 / 456.7s (status: complete)
 ```
+
+The interesting part is what the critic struck. The draft opened with a tidy
+cross-city generalisation; no single passage supported it, so the revision
+replaced it with per-city findings and said so under Evidence Gaps:
 
 ```markdown
 ## Summary
-The council moved from exploratory discussion toward a licensing framework [C412],
-though no ordinance had passed as of the most recent indexed meeting [C588].
+Evidence from Green Bay, Madison, Kenosha, and Racine councils shows permit or
+license discussions tied to a range of festivals and events: neighborhood block
+parties, charity fundraisers, concert series, farmers markets, and parade/street-
+closure requests. Kenosha's evidence largely consists of proclamations naming
+festivals rather than documented permit votes.
+
+## Key Findings
+
+**Green Bay**
+- Keggers LLC one-day event, approval made contingent on obtaining a special event
+  permit; permit status unresolved at time of discussion [C4400][C4403][C4404]
+- Proposed adult "farm camp" events under a temporary use permit, capped at about
+  25 attendees [C9501][C9502][C9503][C9611][C9610]
+
+**Racine**
+- Racine Juneteenth Parade (dispute over staging area and route) [C24257][C24149]
+- Harbor Fest, cited as the reason the Juneteenth parade staging area was being
+  displaced [C24257]
+
+... Madison and Kenosha sections elided ...
 
 ## Evidence Gaps and Uncertainties
-No transcript covers the committee session referenced in [C588], so the outcome
-of that referral is unknown.
-
-## Sources
-[C412] City of Green Bay — Protection & Policy, 2025-04-15, 1240s–1310s
-[C588] City of Green Bay — Common Council, 2026-02-03, 880s–944s
+- The evidence does not support a general characterization of "most" permit actions
+  across all four cities as conditional approvals requiring specific sign-offs; only
+  individual cases (e.g., Green Bay's Keggers LLC and veterans fundraiser) show this
+  pattern explicitly.
+- For several Kenosha events, the evidence shows only proclamation/remark language,
+  not a permit application or vote — it is unclear whether these events went through
+  a licenses-and-permits process documented elsewhere.
+- No evidence shows a permit denial for any named festival; the only unresolved case
+  is Green Bay's Keggers LLC event, where the special event permit had neither been
+  obtained nor denied at the time of discussion [C4400][C4403][C4404].
 ```
+
+Two controls fired on this run, both visible in the `done` line. The researcher
+requested 27 searches across its two passes but only 25 executed — `max_tool_calls`
+cut the last two off, and the agent finished with what it had rather than crashing.
+At $0.80 the run also came within 20% of the `max_cost_usd: 1.00` cap. Corpus-wide
+questions over four cities are near the ceiling of what this config allows.
 
 The SQL guardrails need no API key, so these are verbatim from `app/tools/sql.py`:
 
