@@ -30,7 +30,7 @@ rather than approximating."""
 
 
 def spec(model: str, tools: list[str]) -> AgentSpec:
-    return AgentSpec(name="data_analyst", model=model, system=SYSTEM, max_tokens=4096, tools=tools)
+    return AgentSpec(name="data_analyst", model=model, system=SYSTEM, max_tokens=8000, tools=tools)
 
 
 def run(agent: Agent, state: TaskState) -> str:

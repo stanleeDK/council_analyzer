@@ -18,23 +18,48 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from anthropic import Anthropic
+from pydantic import ValidationError
 
 from app.runtime.approval import Approver, AutoApprover
 from app.runtime.budget import Budget, BudgetExceeded
 from app.runtime.policy import PolicyEngine
-from app.observability.traces import Tracer, Timer
+from app.observability.traces import Tracer, Timer, clip
 from app.tools.base import ToolContext, ToolRegistry
 
 MAX_ITERATIONS = 12
 
+# Models that accept adaptive thinking. Anything not listed gets no thinking
+# parameter at all - which is what every model got implicitly before.
+ADAPTIVE_THINKING_MODELS = (
+    "claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7",
+    "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6",
+)
+
+
+def thinking_kwargs(model: str, thinking: str) -> dict:
+    """Say what thinking to do rather than inheriting the model's default.
+
+    This matters more than it looks. Sonnet 5 thinks when the parameter is
+    omitted, and thinking tokens are spent out of max_tokens - which is how a
+    critique with what looked like plenty of headroom still got cut off
+    mid-JSON. Being explicit makes the budget legible.
+    """
+    if thinking == "off":
+        return {"thinking": {"type": "disabled"}}
+    if model.startswith(ADAPTIVE_THINKING_MODELS):
+        return {"thinking": {"type": "adaptive"}}
+    return {}
+
 
 class StructuredOutputError(RuntimeError):
-    """A structured call came back without a valid object.
+    """A structured call did not yield a valid object.
 
-    Almost always truncation: the model hit max_tokens mid-JSON, so schema
-    validation produced nothing. Raised instead of returning None so the
-    failure names its own cause rather than surfacing as an AttributeError
-    three frames away.
+    Almost always truncation: the model spent max_tokens before finishing the
+    JSON. This arrives two different ways - the SDK hands back a null
+    parsed_output, or (more often) it validates inside messages.parse() and
+    raises pydantic's ValidationError before we see any response at all. Both
+    are funnelled here so the failure names its own cause instead of surfacing
+    as an AttributeError or a raw schema dump three frames away.
     """
 
 
@@ -54,6 +79,7 @@ class AgentSpec:
     system: str
     max_tokens: int = 4096
     tools: list[str] = field(default_factory=list)
+    thinking: str = "adaptive"   # "adaptive" | "off"
 
 
 class Agent:
@@ -123,14 +149,25 @@ class Agent:
     def run_structured(self, prompt: str, output_format):
         """One-shot call returning a validated Pydantic object (no tools)."""
         self.budget.check_model_call()
+        response = None
+        failure: ValidationError | None = None
         with Timer() as timer:
-            response = self.client.messages.parse(
-                model=self.spec.model,
-                max_tokens=self.spec.max_tokens,
-                system=self.spec.system,
-                messages=[{"role": "user", "content": prompt}],
-                output_format=output_format,
-            )
+            try:
+                response = self.client.messages.parse(
+                    model=self.spec.model,
+                    max_tokens=self.spec.max_tokens,
+                    system=self.spec.system,
+                    messages=[{"role": "user", "content": prompt}],
+                    output_format=output_format,
+                    **thinking_kwargs(self.spec.model, self.spec.thinking),
+                )
+            except ValidationError as exc:
+                failure = exc
+
+        if failure is not None:
+            raise StructuredOutputError(
+                self._unparseable(output_format, timer, failure)) from failure
+
         cost = self.budget.charge(self.spec.model, response.usage.input_tokens, response.usage.output_tokens)
         self.tracer.record(
             "model_call", agent=self.spec.name, model=self.spec.model,
@@ -143,6 +180,25 @@ class Agent:
         if parsed is None:
             raise StructuredOutputError(self._structured_failure(response, output_format))
         return parsed
+
+    def _unparseable(self, output_format, timer, failure: ValidationError) -> str:
+        """Report a response that never came back as an object.
+
+        The SDK validates inside messages.parse(), so this path has no usage
+        and no stop_reason - and critically, the budget was never charged. The
+        call did cost money; say so rather than let the trace imply it was free.
+        """
+        message = (
+            f"{self.spec.name}: the model's {output_format.__name__} response could not be "
+            f"parsed. This almost always means it was cut off at "
+            f"max_tokens={self.spec.max_tokens} (thinking is spent from that same budget). "
+            f"Raise this agent's max_tokens, ask it for fewer items per call, or set its "
+            f"thinking to 'off'. NOTE: this call's cost is unknown and is NOT counted "
+            f"toward the run budget. Underlying error: {clip(str(failure), 200)}"
+        )
+        self.tracer.record("error", agent=self.spec.name, model=self.spec.model,
+                           latency_ms=timer.ms, error=message)
+        return message
 
     def _structured_failure(self, response, output_format) -> str:
         stop = getattr(response, "stop_reason", None) or "unknown"
@@ -167,6 +223,7 @@ class Agent:
             max_tokens=self.spec.max_tokens,
             system=self.spec.system,
             messages=messages,
+            **thinking_kwargs(self.spec.model, self.spec.thinking),
         )
         if tool_schemas:
             kwargs["tools"] = tool_schemas

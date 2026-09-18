@@ -27,7 +27,10 @@ counts, totals or trends across many meetings rather than what was said in them.
 
 
 def spec(model: str) -> AgentSpec:
-    return AgentSpec(name="planner", model=model, system=SYSTEM, max_tokens=1024)
+    # 1024 was sized for Haiku, which does not think unless asked. Route this
+    # agent to a thinking model in the workflow YAML and the plan would be cut
+    # off before it was written; the headroom costs nothing on Haiku.
+    return AgentSpec(name="planner", model=model, system=SYSTEM, max_tokens=4000)
 
 
 def run(agent: Agent, state: TaskState) -> ResearchPlan:

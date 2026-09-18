@@ -197,6 +197,11 @@ Workflows are data, not code. `workflows/*.yaml` sets the step sequence, per-age
 model routing, per-agent tool permissions, approval gates and budgets. The same
 runtime serves all three shipped workflows:
 
+Note that `max_tokens` is a budget for everything a model writes, thinking
+included — on models that think by default, reasoning and the answer come out of
+the same allowance. Each agent sets its thinking mode explicitly (`adaptive` or
+`off`) rather than inheriting a per-model default.
+
 ```yaml
 steps: [plan, research, data_analysis, draft, critique, revise]
 
@@ -268,5 +273,9 @@ data/
   chunks, would need a real vector index beyond that.
 - **The critic is another probabilistic model**, not an oracle. Its verdicts are
   recorded in the trace so a human can disagree.
+- **A structured call that gets truncated costs money the budget never sees.** The
+  SDK validates inside `messages.parse()`, so a response cut off at `max_tokens`
+  raises before any usage is returned. The run fails with a clear error naming the
+  cap, but that call's cost cannot be recovered or charged.
 - **`sentence-transformers` is capped below 3.0** because newer releases require
   `torch>=2.5`, which has no Intel-Mac wheel. Drop the cap on Apple Silicon or Linux.

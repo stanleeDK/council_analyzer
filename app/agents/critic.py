@@ -27,9 +27,9 @@ from app.runtime.agent import Agent, AgentSpec
 from app.runtime.state import ClaimCheck, Evidence, TaskState
 
 # One verdict costs ~140 output tokens (claim + reason + action + JSON
-# scaffolding). A draft section this size yields well under max_tokens'
-# worth of them, which is what keeps responses from truncating mid-JSON.
-MAX_DRAFT_CHARS_PER_BATCH = 4000
+# scaffolding). Kept deliberately small because max_tokens covers thinking
+# too, and the critic thinks hard: the JSON gets whatever reasoning leaves.
+MAX_DRAFT_CHARS_PER_BATCH = 2500
 
 # Merged across batches, so bound it: each query buys a search in the
 # follow-up research pass and spends the run's tool budget.
@@ -65,9 +65,10 @@ unsupported claim."""
 
 
 def spec(model: str) -> AgentSpec:
-    # Headroom, not a target: batching keeps each response far below this,
-    # and unused output tokens cost nothing.
-    return AgentSpec(name="critic", model=model, system=SYSTEM, max_tokens=8000)
+    # Headroom, not a target - unused output tokens cost nothing. It needs to
+    # cover thinking *and* the verdicts; 8000 was not enough for both once the
+    # model started reasoning through each claim.
+    return AgentSpec(name="critic", model=model, system=SYSTEM, max_tokens=16000)
 
 
 def run(agent: Agent, state: TaskState) -> CriticReport:
