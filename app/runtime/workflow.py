@@ -101,7 +101,7 @@ class WorkflowRunner:
         trace_db=None,
         echo: bool = True,
     ):
-        self.config = config
+        self.config = config # yaml file steps changed into an internal class
         self.client = client or Anthropic()
         self.registry = ToolRegistry(DEFAULT_TOOLS)
         self.policy = config.policy()
@@ -109,8 +109,10 @@ class WorkflowRunner:
         self.approver = approver or AutoApprover()
         self.ctx = ToolContext(corpus_db=corpus_db, analytics_db=analytics_db)
         self.trace_db = trace_db or get_trace_db()
-        self.echo = echo
+        self.echo = echo #should the app print to console or not
 
+    # this function loads up the runner class's attributes which is the orchestrator 
+    # start the workflow with _run
     def run(self, objective: str) -> TaskState:
         state = TaskState(objective=objective, workflow=self.config.name)
         self.ctx.state = state
@@ -158,14 +160,17 @@ class WorkflowRunner:
 
         if step == "plan":
             plan = planner_agent.run(
-                self._agent(planner_agent.spec(cfg.model_for("planner")), tracer), state)
+                self._agent(
+                    planner_agent.spec(cfg.model_for("planner")), tracer),
+                    state
+                )
+            
             state.notes.append(f"plan: {plan.objective}")
             return research_notes
 
         if step == "research":
             return researcher_agent.run(
-                self._agent(researcher_agent.spec(
-                    cfg.model_for("researcher"), self.policy.tools_for("researcher")), tracer),
+                self._agent(researcher_agent.spec(cfg.model_for("researcher"), self.policy.tools_for("researcher")), tracer),
                 state)
 
         if step == "data_analysis":
