@@ -1,0 +1,7 @@
+python3 scripts/ask.py "what events, fests or festivales did the city of greenbay consider permits for" --db data/processed/experiment_80.db                        
+
+
+python scripts/ingest_documents.py --overlap 0.2 --db data/processed/experiment_overlap.db
+
+
+python scripts/ask.py "what events, fests or festivales did the city of greenbay consider permits for" --db data/processed/experiment_overlap.db
