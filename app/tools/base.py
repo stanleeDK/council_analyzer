@@ -44,17 +44,45 @@ class Tool:
 
 
 class ToolRegistry:
+    """The set of tools that exist, looked up by name.
+
+    Registering a tool does not grant permission to call it — that is the
+    policy engine's job (runtime/policy.py). This is only the catalogue.
+    """
+
     def __init__(self, tools: list[Tool] | None = None):
-        self._tools: dict[str, Tool] = {t.name: t for t in (tools or [])}
+        # Keyed by name because every lookup originates with the model, which
+        # refers to a tool by its name string and nothing else.
+        self._tools: dict[str, Tool] = {}
+        for tool in tools or []:
+            self.register(tool)
 
     def register(self, tool: Tool) -> None:
+        """Add a tool, replacing any earlier tool of the same name."""
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> Tool | None:
+        """The tool with this name, or None if there isn't one.
+
+        Returns None rather than raising, because the name comes from the
+        model and the model can ask for a tool that doesn't exist. The agent
+        loop turns that None into a readable error it can react to.
+        """
         return self._tools.get(name)
 
     def api_schemas(self, names: list[str]) -> list[dict]:
-        return [self._tools[n].api_schema() for n in names if n in self._tools]
+        """API-shaped schemas for the named tools, skipping unknown names.
+
+        The names come from a workflow YAML's tool allowlist, so a typo there
+        offers the model one fewer tool rather than crashing the run.
+        """
+        schemas = []
+        for name in names:
+            tool = self.get(name)
+            if tool is not None:
+                schemas.append(tool.api_schema())
+        return schemas
 
     def names(self) -> list[str]:
-        return sorted(self._tools)
+        """Every registered tool name, alphabetically."""
+        return sorted(self._tools.keys())
