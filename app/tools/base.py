@@ -44,17 +44,61 @@ class Tool:
 
 
 class ToolRegistry:
+    """Looks up Tool objects by name.
+
+    Internally this is just a dictionary: {tool_name: Tool object}. Every
+    method below is a small, named operation on that one dictionary.
+    """
+
     def __init__(self, tools: list[Tool] | None = None):
-        self._tools: dict[str, Tool] = {t.name: t for t in (tools or [])}
+        # self._tools is the dictionary that holds everything. It starts
+        # empty; if a list of tools was passed in, we add each one below.
+        self._tools: dict[str, Tool] = {}
+
+        # tools is optional (defaults to None), so guard against that before
+        # looping over it.
+        if tools is None:
+            tools = []
+
+        for tool in tools:
+            self.register(tool)
 
     def register(self, tool: Tool) -> None:
+        """Add one tool to the registry.
+
+        If a tool with this name is already registered, it gets replaced -
+        dictionary assignment always overwrites an existing key.
+        """
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> Tool | None:
-        return self._tools.get(name)
+        """Look up a tool by name.
+
+        Returns None if the name isn't registered, rather than raising an
+        error. This matters because the caller (the model) can ask for a
+        tool that doesn't exist, and we want that to be a normal, checkable
+        result - not a crash.
+        """
+        if name in self._tools:
+            return self._tools[name]
+        return None
 
     def api_schemas(self, names: list[str]) -> list[dict]:
-        return [self._tools[n].api_schema() for n in names if n in self._tools]
+        """Build the list of tool schemas to send to the Anthropic API.
+
+        Takes a list of tool names (e.g. what one agent is allowed to use)
+        and returns each one's api_schema(). Any name that isn't actually
+        registered is quietly skipped, rather than raising an error.
+        """
+        schemas: list[dict] = []
+        for name in names:
+            tool = self.get(name)
+            if tool is None:
+                continue  # not a real tool name - skip it
+            schemas.append(tool.api_schema())
+        return schemas
 
     def names(self) -> list[str]:
-        return sorted(self._tools)
+        """All registered tool names, alphabetically."""
+        all_names = list(self._tools.keys())
+        return sorted(all_names)
