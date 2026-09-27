@@ -101,7 +101,7 @@ class WorkflowRunner:
         trace_db=None,
         echo: bool = True,
     ):
-        self.config = config
+        self.config = config # yaml file steps changed into an internal class
         self.client = client or Anthropic()
         self.registry = ToolRegistry(DEFAULT_TOOLS)
         self.policy = config.policy()
@@ -109,8 +109,10 @@ class WorkflowRunner:
         self.approver = approver or AutoApprover()
         self.ctx = ToolContext(corpus_db=corpus_db, analytics_db=analytics_db)
         self.trace_db = trace_db or get_trace_db()
-        self.echo = echo
+        self.echo = echo #should the app print to console or not
 
+    # this function loads up the runner class's attributes which is the orchestrator 
+    # start the workflow with _run
     def run(self, objective: str) -> TaskState:
         state = TaskState(objective=objective, workflow=self.config.name)
         self.ctx.state = state
@@ -157,16 +159,22 @@ class WorkflowRunner:
         cfg = self.config
 
         if step == "plan":
-            plan = planner_agent.run(
-                self._agent(planner_agent.spec(cfg.model_for("planner")), tracer), state)
+            planner_model = cfg.model_for("planner")
+            planner_spec = planner_agent.spec(planner_model)
+            planner = self._agent(planner_spec, tracer)
+
+            plan = planner_agent.run(planner, state)
+
             state.notes.append(f"plan: {plan.objective}")
             return research_notes
 
         if step == "research":
-            return researcher_agent.run(
-                self._agent(researcher_agent.spec(
-                    cfg.model_for("researcher"), self.policy.tools_for("researcher")), tracer),
-                state)
+            researcher_model = cfg.model_for("researcher")
+            researcher_tools = self.policy.tools_for("researcher")
+            researcher_spec = researcher_agent.spec(researcher_model, researcher_tools)
+            researcher = self._agent(researcher_spec, tracer)
+
+            return researcher_agent.run(researcher, state)
 
         if step == "data_analysis":
             # If a planner ran and judged this question non-quantitative, skip the
@@ -175,41 +183,60 @@ class WorkflowRunner:
                 tracer.record("note", agent="data_analyst",
                               output_preview="skipped: planner judged question non-quantitative")
                 return research_notes
-            data_agent.run(
-                self._agent(data_agent.spec(
-                    cfg.model_for("data_analyst"), self.policy.tools_for("data_analyst")), tracer),
-                state)
+
+            analyst_model = cfg.model_for("data_analyst")
+            analyst_tools = self.policy.tools_for("data_analyst")
+            analyst_spec = data_agent.spec(analyst_model, analyst_tools)
+            analyst = self._agent(analyst_spec, tracer)
+
+            data_agent.run(analyst, state)
             return research_notes
 
         if step == "draft":
-            reporter_agent.draft(
-                self._agent(reporter_agent.spec(cfg.model_for("reporter")), tracer),
-                state, research_notes)
+            reporter_model = cfg.model_for("reporter")
+            reporter_spec = reporter_agent.spec(reporter_model)
+            reporter = self._agent(reporter_spec, tracer)
+
+            reporter_agent.draft(reporter, state, research_notes)
             return research_notes
 
         if step == "critique":
-            report = critic_agent.run(
-                self._agent(critic_agent.spec(cfg.model_for("critic")), tracer), state)
+            critic_model = cfg.model_for("critic")
+            critic_spec = critic_agent.spec(critic_model)
+            critic = self._agent(critic_spec, tracer)
+
+            report = critic_agent.run(critic, state)
+
             # bounded re-research: exactly one extra pass, only if the critic asked
-            if report.needs_more_research and report.follow_up_queries:
-                if self.echo:
-                    print("   critic requested "
-                          f"{plural(len(report.follow_up_queries), 'follow-up search', 'follow-up searches')}")
-                follow_up = researcher_agent.run(
-                    self._agent(researcher_agent.spec(
-                        cfg.model_for("researcher"), self.policy.tools_for("researcher")), tracer),
-                    state,
-                    extra_instructions=(
-                        "These specific gaps were flagged during verification. Search for "
-                        "each one:\n" + "\n".join(f"- {q}" for q in report.follow_up_queries)
-                    ),
-                )
-                return research_notes + "\n\n=== FOLLOW-UP RESEARCH ===\n" + follow_up
-            return research_notes
+            if not (report.needs_more_research and report.follow_up_queries):
+                return research_notes
+
+            if self.echo:
+                print("   critic requested "
+                      f"{plural(len(report.follow_up_queries), 'follow-up search', 'follow-up searches')}")
+
+            researcher_model = cfg.model_for("researcher")
+            researcher_tools = self.policy.tools_for("researcher")
+            researcher_spec = researcher_agent.spec(researcher_model, researcher_tools)
+            researcher = self._agent(researcher_spec, tracer)
+
+            gaps = "\n".join(f"- {q}" for q in report.follow_up_queries)
+            follow_up = researcher_agent.run(
+                researcher,
+                state,
+                extra_instructions=(
+                    "These specific gaps were flagged during verification. Search for "
+                    f"each one:\n{gaps}"
+                ),
+            )
+            return research_notes + "\n\n=== FOLLOW-UP RESEARCH ===\n" + follow_up
 
         if step == "revise":
-            reporter_agent.revise(
-                self._agent(reporter_agent.spec(cfg.model_for("reporter")), tracer), state)
+            reporter_model = cfg.model_for("reporter")
+            reporter_spec = reporter_agent.spec(reporter_model)
+            reporter = self._agent(reporter_spec, tracer)
+
+            reporter_agent.revise(reporter, state)
             return research_notes
 
         raise ValueError(f"Unknown workflow step '{step}'. "
