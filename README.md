@@ -1,17 +1,16 @@
 # Council Analyzer
 
-**A personal project built to learn and experiment with multi-agent orchestration,
-RAG, tool use, evaluation and agent controls.** The domain — city and county council
-meeting transcripts — was chosen because it's messy, real, and publicly available:
+**A personal project built to learn how multi-agent orchestration and shared
+agent state actually work.** The domain — city and county council meeting
+transcripts — was chosen because it's messy, real, and publicly available:
 auto-generated captions with no speaker labels, misheard proper nouns, and hours of
 procedural filler around the parts that matter.
 
 A question goes in; a plan, a set of searches, a draft, a verification pass, and a
-cited report come out — with a full trace of every model and tool call.
+cited report come out.
 
 **Built with:** Python · Anthropic API (Claude) · Pydantic · sentence-transformers · SQLite
 
-The staged roadmap this repo follows is [`docs/PLATFORM_PLAN.md`](docs/PLATFORM_PLAN.md).
 This README covers what is actually implemented and how to run it.
 
 ## What it does
@@ -23,9 +22,6 @@ Planner ────────── decomposes into subquestions          (st
    ↓
 Researcher ─────── searches transcripts, decides when      (agent loop + tools)
    ↓                to search again
-Data Analyst ───── writes read-only SQL, only if the       (agent loop + tools)
-   ↓                planner flagged the question as
-   ↓                quantitative
 Reporter ───────── drafts a cited answer
    ↓
 Critic ─────────── checks every claim against the          (structured output)
@@ -33,129 +29,20 @@ Critic ─────────── checks every claim against the         
    ↓                trigger one more research pass
 Reporter ───────── revises per the critic's verdicts
    ↓
-cited report + trace + cost
+cited report
 ```
 
 Each agent reads and writes one shared `TaskState`, so the critic can inspect
 what the researcher actually found and the reporter can only cite evidence that
-was really retrieved.
+was really retrieved. `TaskState.notes` is also the run's log: every agent appends
+one line describing what it did, in the order it happened, so after a run you can
+read `state.notes` and see exactly how the answer was assembled. There is no
+separate trace database — the state object *is* the record.
 
 The critic's input is deliberately asymmetric: it gets the **complete** list of
 valid citation IDs (detecting a *fabricated* `[C###]` is impossible without
 knowing the whole valid set) but full passage text only for what the draft
-actually cites — typically a handful out of dozens retrieved. Its verdicts are
-emitted in batches split on the draft's own headings, because verdict count
-scales with the draft, and a long draft otherwise truncates the response
-mid-JSON.
-
-## Example run
-
-A real run asking what event and festival permits four Wisconsin councils
-(Green Bay, Madison, Kenosha, Racine) discussed. Trimmed for length — every line
-below is verbatim from the run, with elisions marked.
-
-```
-── plan ──
-  [planner] model claude-haiku-4-5 — 2.7s / $0.0012
-  [planner] objective: Identify all events, festivals, or fests that city and county councils discussed permit applications or decisions for across their meetings.
-            cities: all jurisdictions · quantitative: no
-            1. What specific events, festivals, or fests were mentioned in council meetings when discussing permit applications?
-            2. What decisions did councils make regarding permits for festivals or public events?
-            3. Were there any recurring annual events or festivals that councils approved permits for?
-            4. What conditions or requirements did councils place on event permits?
-            5. Which departments or staff presented information about event permit requests to councils?
-
-── research ──
-  [researcher] tool  search_transcripts({"query": "special event permit festival application council"}) — 22.3s
-  [researcher] tool  search_transcripts({"query": "Oktoberfest permit"}) — 12.4s
-  [researcher] tool  search_transcripts({"query": "Salmon-A-Rama Racine event"}) — 12.0s
-  ... 11 more searches ...
-  [researcher] 14 searches → 92 new passages (92 total) · stopped: end_turn
-
-── data_analysis ──
-  [data_analyst] skipped: planner judged question non-quantitative
-
-── draft ──
-  [reporter] draft: 3874 chars · cites 33/92 passages
-             sections: Summary | Key Findings | Evidence Gaps and Uncertainties | Sources
-
-── critique ──
-  [critic] 30 claims checked across 3 batches · 27 supported, 1 partial, 2 unsupported
-           · [unsupported] Across the four cities' councils (Green Bay, Madison, Kenosha, Racine), event/festival permit discussions…
-           · [unsupported] Most permit actions were conditional approvals tied to separate sign-offs (special event permits, street-use…
-           · [partially_supported] Proposed Designated Outdoor Refreshment Area (Dora) tied to downtown events [C12345]
-           follow-ups: Green Bay council special event permit conditional approval DPW, Madison council festival permit noise variance, …
-   critic requested 4 follow-up searches
-  [researcher] 13 searches → 39 new passages (131 total) · stopped: end_turn
-
-── revise ──
-  [reporter] final: 4945 chars · cites 33/131 passages · applied 30 verdicts (2 unsupported)
-             sections: Summary | Key Findings | Evidence Gaps and Uncertainties | Sources
-
-── done ── 16 model calls, 25 tool calls, 305746 in / 19005 out tokens, $0.8003 / 456.7s (status: complete)
-```
-
-The interesting part is what the critic struck. The draft opened with a tidy
-cross-city generalisation; no single passage supported it, so the revision
-replaced it with per-city findings and said so under Evidence Gaps:
-
-```markdown
-## Summary
-Evidence from Green Bay, Madison, Kenosha, and Racine councils shows permit or
-license discussions tied to a range of festivals and events: neighborhood block
-parties, charity fundraisers, concert series, farmers markets, and parade/street-
-closure requests. Kenosha's evidence largely consists of proclamations naming
-festivals rather than documented permit votes.
-
-## Key Findings
-
-**Green Bay**
-- Keggers LLC one-day event, approval made contingent on obtaining a special event
-  permit; permit status unresolved at time of discussion [C4400][C4403][C4404]
-- Proposed adult "farm camp" events under a temporary use permit, capped at about
-  25 attendees [C9501][C9502][C9503][C9611][C9610]
-
-**Racine**
-- Racine Juneteenth Parade (dispute over staging area and route) [C24257][C24149]
-- Harbor Fest, cited as the reason the Juneteenth parade staging area was being
-  displaced [C24257]
-
-... Madison and Kenosha sections elided ...
-
-## Evidence Gaps and Uncertainties
-- The evidence does not support a general characterization of "most" permit actions
-  across all four cities as conditional approvals requiring specific sign-offs; only
-  individual cases (e.g., Green Bay's Keggers LLC and veterans fundraiser) show this
-  pattern explicitly.
-- For several Kenosha events, the evidence shows only proclamation/remark language,
-  not a permit application or vote — it is unclear whether these events went through
-  a licenses-and-permits process documented elsewhere.
-- No evidence shows a permit denial for any named festival; the only unresolved case
-  is Green Bay's Keggers LLC event, where the special event permit had neither been
-  obtained nor denied at the time of discussion [C4400][C4403][C4404].
-```
-
-Two controls fired on this run, both visible in the `done` line. The researcher
-requested 27 searches across its two passes but only 25 executed — `max_tool_calls`
-cut the last two off, and the agent finished with what it had rather than crashing.
-At $0.80 the run also came within 20% of the `max_cost_usd: 1.00` cap. Corpus-wide
-questions over four cities are near the ceiling of what this config allows.
-
-The SQL guardrails need no API key, so these are verbatim from `app/tools/sql.py`:
-
-```
->>> run_readonly_sql({"sql": "DELETE FROM meetings"})
-SQL rejected: only SELECT/WITH queries are allowed, got 'DELETE'
-
->>> run_readonly_sql({"sql": "SELECT 1; DROP TABLE meetings"})
-SQL rejected: multiple statements are not allowed; submit one SELECT at a time
-
->>> run_readonly_sql({"sql": "SELECT nonexistent FROM meetings"})
-SQL error: OperationalError: no such column: nonexistent
-```
-
-The last one matters as much as the rejections: a failed query comes back as text
-the model can read and correct, rather than crashing the run.
+actually cites — typically a handful out of dozens retrieved.
 
 ## Setup
 
@@ -180,25 +67,14 @@ python3 scripts/run_workflow.py "How has the council's stance on short-term rent
 python3 scripts/run_workflow.py "..." --save-state runs/state.json --quiet
 ```
 
-### 2. Quantitative analysis (Text2SQL)
+`--save-state` writes the full `TaskState` as JSON, including `notes` — the
+clearest way to see the whole run's state after the fact.
 
-No retrieval — the agent inspects a schema, writes read-only SQL, sanity-checks it.
+### 2. Single-pass RAG baseline
 
-```bash
-python3 scripts/run_workflow.py "How many meetings did each city hold in 2026?" --workflow text2sql
-```
-
-### 3. Research with a human approval gate
-
-Same as deep research, but every SQL query stops and asks you first.
-
-```bash
-python3 scripts/run_workflow.py "..." --workflow research_with_approval
-```
-
-### 4. Single-pass RAG baseline
-
-Retrieve and answer in one shot — no agents. Useful as the control in experiments.
+Retrieve and answer in one shot — no agents. Useful as the control in experiments,
+and as the simplest possible example of citing retrieved evidence before looking
+at the agent loop.
 
 ```bash
 python3 scripts/ask.py "What did the council decide about short-term rentals?" --city "City of Green Bay"
@@ -211,43 +87,14 @@ python3 scripts/ask.py "What did the council decide about short-term rentals?" -
 python3 scripts/ingest_documents.py
 python3 scripts/ingest_documents.py --chunk-words 180 --overlap 0.2 --db data/processed/exp.db
 
-# 2. Build the analytics DB the SQL agent queries (derived from the corpus)
-python3 scripts/seed_analytics_db.py
-
-# 3. Ask something
+# 2. Ask something
 python3 scripts/run_workflow.py "your question"
-
-# 4. See exactly what happened
-python3 scripts/show_trace.py            # list recent runs
-python3 scripts/show_trace.py <run_id>   # every model + tool call, with cost
 ```
 
-## Retrieval evaluation
+## Configuration
 
-This measures the **retriever**, not the final generated report. Answer quality,
-groundedness and citation correctness are not yet scored — see Known limitations.
-
-Retrieval is scored against hand-verified cases in `data/evals/retrieval_evals.json`.
-Ground truth is a *substring a correct passage must contain*, not a chunk ID —
-chunk IDs change whenever the corpus is re-chunked, so content-based truth is
-what makes a parameter sweep possible.
-
-```bash
-python3 scripts/run_evals.py                          # hit_rate + MRR for one corpus
-python3 scripts/run_evals.py --db data/processed/exp.db --top-k 10
-
-# Grid-search chunking against the evals (slow: re-embeds the corpus per point)
-python3 scripts/sweep_chunking.py --chunk-sizes 80 180 300 --overlaps 0 0.2
-```
-
-**Add more eval cases.** Five cases prove almost nothing; 15-30 across different
-cities and question styles is the minimum for tuning against.
-
-## Configuration — what makes this a platform
-
-Workflows are data, not code. `workflows/*.yaml` sets the step sequence, per-agent
-model routing, per-agent tool permissions, approval gates and budgets. The same
-runtime serves all three shipped workflows:
+Workflows are data, not code. `workflows/deep_research.yaml` sets the step
+sequence, per-agent model routing, per-agent tool permissions, and budgets.
 
 Note that `max_tokens` is a budget for everything a model writes, thinking
 included — on models that think by default, reasoning and the answer come out of
@@ -255,57 +102,46 @@ the same allowance. Each agent sets its thinking mode explicitly (`adaptive` or
 `off`) rather than inheriting a per-model default.
 
 ```yaml
-steps: [plan, research, data_analysis, draft, critique, revise]
+steps: [plan, research, draft, critique, revise]
 
 models:
   planner: claude-haiku-4-5      # cheap model for structured decomposition
   default: claude-sonnet-5
 
-tools:                            # least privilege: researcher can't touch SQL
-  researcher: [search_transcripts]
-  data_analyst: [get_schema, run_readonly_sql, calculate]
-
-approvals:
-  run_readonly_sql: always        # <- flip to gate this tool behind a human
+tools:                            # least privilege: only the researcher
+  researcher: [search_transcripts]  # can touch the corpus
 
 limits:
   max_tool_calls: 25
   max_cost_usd: 1.00
 ```
 
-Adding a workflow means adding a YAML file. No runtime changes.
+Adding a workflow means adding a YAML file with a different step sequence,
+model routing, or tool permissions. No runtime changes.
 
 ## Project layout
 
 ```
 app/
-  runtime/        agent loop, workflow engine, policy, budgets, approvals, state
-  agents/         planner, researcher, data_analyst, critic, reporter
-  tools/          search_transcripts, run_readonly_sql, get_schema, calculate
+  runtime/        agent loop, workflow engine, policy, budgets, state
+  agents/         planner, researcher, critic, reporter
+  tools/          search_transcripts
   rag/            parse_lrc, chunk, embed, ingest, retrieve
-  db/             corpus schema/connection + derived analytics DB
-  evaluation/     retrieval metrics, eval runner, parameter sweep
-  observability/  trace recording
-workflows/        deep_research, text2sql, research_with_approval
+  db/             corpus schema/connection
+  text.py         small formatting helpers (plural, clip)
+workflows/        deep_research.yaml
 scripts/          CLI entry points
 data/
   raw/            <city>/<meeting>.lrc  (gitignored)
-  processed/      corpus, analytics and trace databases (gitignored)
-  evals/          hand-verified eval cases
+  processed/      corpus database (gitignored)
 ```
 
 ## Safety and controls
 
 - **Least privilege** — an agent can only call tools its workflow grants it.
   A denied call comes back as a readable error the model can react to, not a crash.
-- **Read-only SQL** — the analytics DB is opened `mode=ro`, and SQL is additionally
-  validated (single statement, SELECT/WITH only, forbidden keywords, injected LIMIT,
-  query timeout) so the model gets clear errors instead of opaque failures.
-- **No code execution** — `calculate` walks the Python AST and permits only
-  arithmetic; `eval()` is never used on model output.
 - **Budgets** — per-run caps on tool calls, model calls and dollar cost, enforced
   before each call. Exceeding one ends the run cleanly.
-- **Human approval** — any tool can be gated behind a terminal prompt via config.
 - **Untrusted corpus** — transcripts are treated as data. Agents are instructed to
   cite only retrieved passages and never to act on instructions found inside them.
 
@@ -314,20 +150,20 @@ data/
 - **No speaker attribution.** Auto-captions don't identify who's speaking, so
   "what did council member X say" can't be answered — only "what was said."
 - **Retrieval misses rare proper nouns.** Dense embeddings dilute a short distinctive
-  phrase inside a long procedural chunk. `eval_001` documents a real, reproducible
-  miss. Hybrid keyword + vector search is the likely fix and is not built yet.
+  phrase inside a long procedural chunk. Hybrid keyword + vector search is the likely
+  fix and is not built yet.
 - **Chunking is word-count based**, with no awareness of agenda-item boundaries, so a
   chunk can straddle two unrelated topics.
-- **The analytics DB covers meeting coverage, not outcomes** — which meetings were
-  recorded, when, how long. It has no votes or motions; the data agent is told to say
-  so rather than approximate.
 - **Retrieval is brute-force cosine similarity** in numpy — fine for thousands of
   chunks, would need a real vector index beyond that.
 - **The critic is another probabilistic model**, not an oracle. Its verdicts are
-  recorded in the trace so a human can disagree.
+  recorded in `state.notes` so a human can disagree.
 - **A structured call that gets truncated costs money the budget never sees.** The
   SDK validates inside `messages.parse()`, so a response cut off at `max_tokens`
   raises before any usage is returned. The run fails with a clear error naming the
   cap, but that call's cost cannot be recovered or charged.
+- **A single, very long draft could still truncate the critic's response**, since
+  the critic now checks the whole draft in one call rather than splitting it into
+  batches. Raise the critic's `max_tokens` in the workflow YAML if that happens.
 - **`sentence-transformers` is capped below 3.0** because newer releases require
   `torch>=2.5`, which has no Intel-Mac wheel. Drop the cap on Apple Silicon or Linux.

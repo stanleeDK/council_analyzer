@@ -2,12 +2,10 @@ name: deep_research
 
 # The sequence. Bounded agentic decisions happen *inside* steps:
 # the researcher chooses its own searches; critique may trigger one
-# extra research pass; data_analysis is skipped unless the planner
-# flagged the question as quantitative.
+# extra research pass.
 steps:
   - plan
   - research
-  - data_analysis
   - draft
   - critique
   - revise
@@ -18,7 +16,6 @@ models:
   default: claude-sonnet-5
   planner: claude-haiku-4-5
   researcher: claude-sonnet-5
-  data_analyst: claude-sonnet-5
   critic: claude-sonnet-5
   reporter: claude-sonnet-5
 
@@ -27,16 +24,6 @@ models:
 tools:
   researcher:
     - search_transcripts
-  data_analyst:
-    - get_schema
-    - run_readonly_sql
-    - calculate
-
-approvals:
-  search_transcripts: never
-  get_schema: never
-  run_readonly_sql: never
-  calculate: never
 
 limits:
   max_tool_calls: 25

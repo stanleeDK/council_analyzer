@@ -4,6 +4,11 @@ Every agent in a workflow reads from and writes to one of these. Keeping
 state explicit (rather than passing chat history around) is what lets the
 critic inspect what the researcher actually found, and lets the reporter
 cite evidence it never retrieved itself.
+
+`TaskState.notes` doubles as the run's log: each agent appends one line
+describing what it did, in order, through `TaskState.log()`. There is no
+separate trace database - the state object you can already inspect is the
+record of what happened.
 """
 from __future__ import annotations
 
@@ -51,15 +56,17 @@ class TaskState:
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     subquestions: list[str] = field(default_factory=list)
     relevant_cities: list[str] = field(default_factory=list)
-    needs_quantitative_data: bool = False
     evidence: list[Evidence] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
-    sql_results: list[dict] = field(default_factory=list)
     draft: str = ""
     claim_checks: list[ClaimCheck] = field(default_factory=list)
     final_report: str = ""
     status: str = "running"  # running | complete | failed | halted
     notes: list[str] = field(default_factory=list)
+
+    def log(self, message: str) -> None:
+        """Record one line describing what just happened, in order."""
+        self.notes.append(message)
 
     def add_evidence(self, items: list[Evidence]) -> list[Evidence]:
         """Append evidence, skipping citation_ids already collected."""

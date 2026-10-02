@@ -7,9 +7,11 @@ every passage this one retrieved.
 """
 from __future__ import annotations
 
-from app.observability.traces import clip, plural
+import re
+
 from app.runtime.agent import Agent, AgentSpec
 from app.runtime.state import Finding, TaskState
+from app.text import clip, plural
 
 SYSTEM = """You research questions using ONLY the search_transcripts tool over a corpus \
 of city/county council meeting transcripts.
@@ -54,30 +56,32 @@ def run(agent: Agent, state: TaskState, extra_instructions: str = "") -> str:
     result = agent.run("\n".join(lines))
     state.findings.extend(_parse_findings(result.text))
 
-    agent.tracer.record("note", agent="researcher", output_preview=_summary(
-        state, result, state.findings[findings_before:], len(state.evidence) - evidence_before))
-    state.notes.append(f"researcher: {result.tool_calls} searches, "
-                       f"{len(state.evidence)} evidence passages, stopped={result.stopped_because}")
+    agent.log(_summary(state, result, state.findings[findings_before:],
+                       len(state.evidence) - evidence_before))
     return result.text
 
 
 def _summary(state: TaskState, result, new_findings: list[Finding], new_passages: int) -> str:
     """What this pass actually found, one line per subquestion.
 
-    The searches themselves already echo as tool calls; what they add up to
+    The searches themselves already print as tool calls; what they add up to
     does not, and that is the part worth reading.
     """
-    header = (f"{plural(result.tool_calls, 'search', 'searches')} \u2192 "
+    header = (f"  [researcher] {plural(result.tool_calls, 'search', 'searches')} -> "
               f"{plural(new_passages, 'new passage')} "
-              f"({len(state.evidence)} total) \u00b7 stopped: {result.stopped_because}")
-    if not new_findings:
-        return header + "\n\u00b7 (no SUBQUESTION/FINDING pairs parsed from the response)"
+              f"({len(state.evidence)} total) - stopped: {result.stopped_because}")
     lines = [header]
+    if not new_findings:
+        lines.append("               (no SUBQUESTION/FINDING pairs parsed from the response)")
+        return "\n".join(lines)
     for finding in new_findings:
         # The finding text already carries its citations inline; only say
         # something when it carries none.
         body = clip(finding.finding, 130)
-        lines.append(f"\u00b7 {body}" if finding.citation_ids else f"\u00b7 {body} (uncited)")
+        if finding.citation_ids:
+            lines.append(f"               - {body}")
+        else:
+            lines.append(f"               - {body} (uncited)")
     return "\n".join(lines)
 
 
@@ -105,5 +109,4 @@ def _parse_findings(text: str) -> list[Finding]:
 
 
 def _citation_ids(text: str) -> list[str]:
-    import re
     return re.findall(r"\[(C\d+)\]", text)

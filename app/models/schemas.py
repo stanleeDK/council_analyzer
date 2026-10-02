@@ -13,9 +13,6 @@ class ResearchPlan(BaseModel):
     objective: str = Field(description="One sentence restating what the user actually wants to know.")
     subquestions: list[str] = Field(description="3-6 concrete questions answerable from meeting transcripts.")
     relevant_cities: list[str] = Field(description="Cities/counties named or clearly implied; empty if none.")
-    needs_quantitative_data: bool = Field(
-        description="True if answering requires counts/aggregates across meetings rather than quoted discussion."
-    )
 
 
 class ClaimVerdict(BaseModel):

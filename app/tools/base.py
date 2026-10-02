@@ -19,7 +19,6 @@ from typing import Callable, Any
 class ToolContext:
     """Everything a handler might need that isn't in tool_input."""
     corpus_db: sqlite3.Connection | None = None
-    analytics_db: sqlite3.Connection | None = None
     state: Any = None  # TaskState; typed loosely to avoid a circular import
 
 

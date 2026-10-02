@@ -5,25 +5,25 @@ A hand-written tool-use loop against the Anthropic Messages API:
     model call -> stop_reason?
         end_turn  -> done, return text
         tool_use  -> for each requested tool:
-                       policy check -> approval gate -> budget check -> execute
+                       policy check -> budget check -> execute
                      feed all results back as one user message, loop
         refusal / max_tokens / pause_turn -> handled explicitly
 
 Deliberately not using the SDK's tool_runner helper: every hop through
-this loop is where permissions, budgets, human approval and tracing get
-enforced, and those are the point of the exercise.
+this loop is where permissions, budgets, and logging get enforced, and
+those are the point of the exercise.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from anthropic import Anthropic
 from pydantic import ValidationError
 
-from app.runtime.approval import Approver, AutoApprover
 from app.runtime.budget import Budget, BudgetExceeded
 from app.runtime.policy import PolicyEngine
-from app.observability.traces import Tracer, Timer, clip
+from app.text import clip
 from app.tools.base import ToolContext, ToolRegistry
 
 MAX_ITERATIONS = 12
@@ -63,6 +63,18 @@ class StructuredOutputError(RuntimeError):
     """
 
 
+class Timer:
+    """Measures how long the `with` block took, in milliseconds."""
+
+    def __enter__(self):
+        self.started_at = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc_info):
+        self.ms = (time.perf_counter() - self.started_at) * 1000
+        return False
+
+
 @dataclass
 class AgentResult:
     text: str
@@ -90,9 +102,8 @@ class Agent:
         registry: ToolRegistry,
         policy: PolicyEngine,
         budget: Budget,
-        tracer: Tracer,
         ctx: ToolContext,
-        approver: Approver | None = None,
+        echo: bool = True,
         max_iterations: int = MAX_ITERATIONS,
     ):
         self.spec = spec
@@ -100,10 +111,22 @@ class Agent:
         self.registry = registry
         self.policy = policy
         self.budget = budget
-        self.tracer = tracer
         self.ctx = ctx
-        self.approver = approver or AutoApprover()
+        self.echo = echo
         self.max_iterations = max_iterations
+
+    # -- logging -----------------------------------------------------------
+
+    def log(self, message: str) -> None:
+        """Record one line in the run's state, and print it if echo is on.
+
+        This is the whole observability story: no separate trace database,
+        just the same state object every agent already reads and writes.
+        """
+        if self.ctx.state is not None:
+            self.ctx.state.log(message)
+        if self.echo:
+            print(message)
 
     # -- public API ------------------------------------------------------
 
@@ -117,13 +140,13 @@ class Agent:
             try:
                 response = self._call_model(messages, tool_schemas)
             except BudgetExceeded as exc:
-                self.tracer.record("error", agent=self.spec.name, error=str(exc))
+                self.log(f"  [{self.spec.name}] ERROR {exc}")
                 return AgentResult(self._last_text(messages), f"budget_exceeded: {exc}", iteration, tool_calls)
 
             if response.stop_reason == "refusal":
                 detail = getattr(response, "stop_details", None)
                 reason = f"refusal: {getattr(detail, 'category', 'unknown')}"
-                self.tracer.record("error", agent=self.spec.name, error=reason)
+                self.log(f"  [{self.spec.name}] ERROR {reason}")
                 return AgentResult("", reason, iteration, tool_calls)
 
             if response.stop_reason == "pause_turn":
@@ -142,8 +165,7 @@ class Agent:
                 results.append(self._execute_tool_block(block))
             messages.append({"role": "user", "content": results})
 
-        self.tracer.record("note", agent=self.spec.name,
-                           output_preview=f"hit max_iterations={self.max_iterations}")
+        self.log(f"  [{self.spec.name}] hit max_iterations={self.max_iterations}")
         return AgentResult(self._last_text(messages), "max_iterations", self.max_iterations, tool_calls)
 
     def run_structured(self, prompt: str, output_format):
@@ -169,24 +191,20 @@ class Agent:
                 self._unparseable(output_format, timer, failure)) from failure
 
         cost = self.budget.charge(self.spec.model, response.usage.input_tokens, response.usage.output_tokens)
-        self.tracer.record(
-            "model_call", agent=self.spec.name, model=self.spec.model,
-            input_tokens=response.usage.input_tokens, output_tokens=response.usage.output_tokens,
-            cost_usd=cost, latency_ms=timer.ms,
-            output_preview=str(response.parsed_output)[:500],
-        )
+        if self.echo:
+            print(f"  [{self.spec.name}] model {self.spec.model} — {timer.ms / 1000:.1f}s / ${cost:.4f}")
 
         parsed = getattr(response, "parsed_output", None)
         if parsed is None:
             raise StructuredOutputError(self._structured_failure(response, output_format))
         return parsed
 
-    def _unparseable(self, output_format, timer, failure: ValidationError) -> str:
+    def _unparseable(self, output_format, timer: Timer, failure: ValidationError) -> str:
         """Report a response that never came back as an object.
 
         The SDK validates inside messages.parse(), so this path has no usage
         and no stop_reason - and critically, the budget was never charged. The
-        call did cost money; say so rather than let the trace imply it was free.
+        call did cost money; say so rather than let the log imply it was free.
         """
         message = (
             f"{self.spec.name}: the model's {output_format.__name__} response could not be "
@@ -196,8 +214,7 @@ class Agent:
             f"thinking to 'off'. NOTE: this call's cost is unknown and is NOT counted "
             f"toward the run budget. Underlying error: {clip(str(failure), 200)}"
         )
-        self.tracer.record("error", agent=self.spec.name, model=self.spec.model,
-                           latency_ms=timer.ms, error=message)
+        self.log(f"  [{self.spec.name}] ERROR {message}")
         return message
 
     def _structured_failure(self, response, output_format) -> str:
@@ -211,7 +228,7 @@ class Agent:
                 f" The response was cut off mid-JSON at max_tokens={self.spec.max_tokens}. "
                 "Either raise this agent's max_tokens or ask it for fewer items per call."
             )
-        self.tracer.record("error", agent=self.spec.name, error=message)
+        self.log(f"  [{self.spec.name}] ERROR {message}")
         return message
 
     # -- internals -------------------------------------------------------
@@ -232,34 +249,22 @@ class Agent:
             response = self.client.messages.create(**kwargs)
 
         cost = self.budget.charge(self.spec.model, response.usage.input_tokens, response.usage.output_tokens)
-        self.tracer.record(
-            "model_call", agent=self.spec.name, model=self.spec.model,
-            input_tokens=response.usage.input_tokens, output_tokens=response.usage.output_tokens,
-            cost_usd=cost, latency_ms=timer.ms, output_preview=_text_of(response)[:500],
-        )
+        if self.echo:
+            print(f"  [{self.spec.name}] model {self.spec.model} — {timer.ms / 1000:.1f}s / ${cost:.4f}")
         return response
 
     def _execute_tool_block(self, block) -> dict:
-        """Policy -> approval -> budget -> execute. Every rejection is a
-        tool_result the model can read and react to, not a crash."""
+        """Policy -> budget -> execute. Every rejection is a tool_result the
+        model can read and react to, not a crash."""
         decision = self.policy.decide(self.spec.name, block.name)
         if not decision.allowed:
-            self.tracer.record("tool_call", agent=self.spec.name, tool=block.name,
-                               tool_input=dict(block.input), error=decision.reason)
+            self.log(f"  [{self.spec.name}] tool  {block.name} DENIED: {decision.reason}")
             return _tool_error(block.id, f"Denied by policy: {decision.reason}")
-
-        if decision.requires_approval:
-            approved = self.approver.approve(self.spec.name, block.name, dict(block.input))
-            if not approved:
-                self.tracer.record("tool_call", agent=self.spec.name, tool=block.name,
-                                   tool_input=dict(block.input), error="rejected by human")
-                return _tool_error(block.id, "A human reviewer rejected this action. Do not retry it.")
 
         try:
             self.budget.check_tool_call()
         except BudgetExceeded as exc:
-            self.tracer.record("tool_call", agent=self.spec.name, tool=block.name,
-                               tool_input=dict(block.input), error=str(exc))
+            self.log(f"  [{self.spec.name}] tool  {block.name} ERROR {exc}")
             return _tool_error(block.id, f"Budget exceeded: {exc}. Summarise what you have and stop.")
 
         tool = self.registry.get(block.name)
@@ -273,9 +278,12 @@ class Agent:
             except Exception as exc:  # a broken tool shouldn't kill the run
                 output, error = f"Tool raised {type(exc).__name__}: {exc}", str(exc)
 
-        self.tracer.record("tool_call", agent=self.spec.name, tool=block.name,
-                           tool_input=dict(block.input), output_preview=output[:500],
-                           latency_ms=timer.ms, error=error)
+        if self.echo:
+            arg = clip(str(dict(block.input)), 100)
+            print(f"  [{self.spec.name}] tool  {block.name}({arg}) — {timer.ms / 1000:.1f}s")
+        if error:
+            self.log(f"  [{self.spec.name}] tool  {block.name} ERROR {error}")
+
         return {
             "type": "tool_result",
             "tool_use_id": block.id,
