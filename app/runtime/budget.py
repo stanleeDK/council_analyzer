@@ -9,7 +9,7 @@ Anthropic's pricing changes.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 PRICES_USD_PER_MTOK = {
     "claude-opus-5": (5.00, 25.00),
@@ -33,7 +33,6 @@ class Budget:
     cost_usd: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
-    per_model: dict[str, float] = field(default_factory=dict)
 
     def charge(self, model: str, input_tokens: int, output_tokens: int) -> float:
         rate_in, rate_out = PRICES_USD_PER_MTOK.get(model, (0.0, 0.0))
@@ -41,7 +40,6 @@ class Budget:
         self.cost_usd += cost
         self.input_tokens += input_tokens
         self.output_tokens += output_tokens
-        self.per_model[model] = self.per_model.get(model, 0.0) + cost
         return cost
 
     def check_model_call(self) -> None:
