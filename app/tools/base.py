@@ -1,9 +1,9 @@
 """Tool definitions.
 
-A tool is a controlled function the model may *request*. The runtime
-decides whether it actually runs (see runtime/policy.py). Each Tool
-carries the JSON schema sent to the API plus the Python handler that
-executes it.
+A tool is a function the model may *request*. An agent only ever sees the
+tools listed in its own AgentSpec.tools (set by the workflow YAML), so it
+can never request one it wasn't handed. Each Tool carries the JSON schema
+sent to the API plus the Python handler that executes it.
 
 Handlers receive (tool_input: dict, ctx: ToolContext) and return a
 string, which becomes the tool_result the model sees.

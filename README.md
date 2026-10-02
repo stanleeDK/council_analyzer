@@ -123,7 +123,7 @@ model routing, or tool permissions. No runtime changes.
 
 ```
 app/
-  runtime/        agent loop, workflow engine, policy, budgets, state
+  runtime/        agent loop, workflow engine, budgets, state
   agents/         planner, researcher, critic, reporter
   tools/          search_transcripts
   rag/            parse_lrc, chunk, embed, ingest, retrieve
@@ -138,8 +138,9 @@ data/
 
 ## Safety and controls
 
-- **Least privilege** — an agent can only call tools its workflow grants it.
-  A denied call comes back as a readable error the model can react to, not a crash.
+- **Least privilege by construction** — each agent's `AgentSpec.tools` (set from the
+  workflow YAML) is the only set of tools ever shown to the model for that agent, so
+  it cannot request one outside that set in the first place.
 - **Budgets** — per-run caps on tool calls, model calls and dollar cost, enforced
   before each call. Exceeding one ends the run cleanly.
 - **Untrusted corpus** — transcripts are treated as data. Agents are instructed to

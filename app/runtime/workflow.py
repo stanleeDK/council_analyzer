@@ -12,7 +12,7 @@ each step are the model's.
 
 Making this config-driven means a new workflow is a YAML file, not a code
 change: a different step sequence, different per-agent models, different
-tool permissions and budgets, all served by the same runtime.
+tool assignments and budgets, all served by the same runtime.
 """
 from __future__ import annotations
 
@@ -29,7 +29,6 @@ from app.agents import reporter as reporter_agent
 from app.agents import researcher as researcher_agent
 from app.runtime.agent import Agent
 from app.runtime.budget import Budget
-from app.runtime.policy import PolicyEngine
 from app.runtime.state import TaskState
 from app.text import plural
 from app.tools.base import ToolContext, ToolRegistry
@@ -69,8 +68,8 @@ class WorkflowConfig:
             limits=raw.get("limits", {}),
         )
 
-    def policy(self) -> PolicyEngine:
-        return PolicyEngine(agent_tools=self.agent_tools)
+    def tools_for(self, agent: str) -> list[str]:
+        return list(self.agent_tools.get(agent, []))
 
     def budget(self) -> Budget:
         return Budget(
@@ -94,7 +93,6 @@ class WorkflowRunner:
         self.config = config
         self.client = client or Anthropic()
         self.registry = ToolRegistry(DEFAULT_TOOLS)
-        self.policy = config.policy()
         self.budget = config.budget()
         self.ctx = ToolContext(corpus_db=corpus_db)
         self.echo = echo
@@ -134,7 +132,7 @@ class WorkflowRunner:
 
     def _agent(self, spec) -> Agent:
         return Agent(spec=spec, client=self.client, registry=self.registry,
-                     policy=self.policy, budget=self.budget, ctx=self.ctx, echo=self.echo)
+                     budget=self.budget, ctx=self.ctx, echo=self.echo)
 
     def _run_step(self, step: str, state: TaskState, research_notes: str) -> str:
         if step == "plan":
@@ -158,7 +156,7 @@ class WorkflowRunner:
         return research_notes
 
     def _run_research(self, state: TaskState, research_notes: str) -> str:
-        researcher_tools = self.policy.tools_for("researcher")
+        researcher_tools = self.config.tools_for("researcher")
         researcher_spec = researcher_agent.spec(self.config.model_for("researcher"), researcher_tools)
         researcher = self._agent(researcher_spec)
         return researcher_agent.run(researcher, state)
@@ -182,7 +180,7 @@ class WorkflowRunner:
             print("   critic requested "
                   f"{plural(len(report.follow_up_queries), 'follow-up search', 'follow-up searches')}")
 
-        researcher_tools = self.policy.tools_for("researcher")
+        researcher_tools = self.config.tools_for("researcher")
         researcher_spec = researcher_agent.spec(self.config.model_for("researcher"), researcher_tools)
         researcher = self._agent(researcher_spec)
 

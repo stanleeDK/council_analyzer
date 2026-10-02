@@ -5,13 +5,17 @@ A hand-written tool-use loop against the Anthropic Messages API:
     model call -> stop_reason?
         end_turn  -> done, return text
         tool_use  -> for each requested tool:
-                       policy check -> budget check -> execute
+                       budget check -> execute
                      feed all results back as one user message, loop
         refusal / max_tokens / pause_turn -> handled explicitly
 
 Deliberately not using the SDK's tool_runner helper: every hop through
-this loop is where permissions, budgets, and logging get enforced, and
-those are the point of the exercise.
+this loop is where budgets and logging get enforced, and those are the
+point of the exercise.
+
+An agent only ever sees the tools listed in its own AgentSpec.tools - set
+by the workflow YAML an agent is run under - so it can never request a
+tool it wasn't handed in the first place.
 """
 from __future__ import annotations
 
@@ -22,7 +26,6 @@ from anthropic import Anthropic
 from pydantic import ValidationError
 
 from app.runtime.budget import Budget, BudgetExceeded
-from app.runtime.policy import PolicyEngine
 from app.text import clip
 from app.tools.base import ToolContext, ToolRegistry
 
@@ -100,7 +103,6 @@ class Agent:
         spec: AgentSpec,
         client: Anthropic,
         registry: ToolRegistry,
-        policy: PolicyEngine,
         budget: Budget,
         ctx: ToolContext,
         echo: bool = True,
@@ -109,7 +111,6 @@ class Agent:
         self.spec = spec
         self.client = client
         self.registry = registry
-        self.policy = policy
         self.budget = budget
         self.ctx = ctx
         self.echo = echo
@@ -133,7 +134,7 @@ class Agent:
     def run(self, prompt: str) -> AgentResult:
         """Run the loop until the model stops asking for tools."""
         messages: list[dict] = [{"role": "user", "content": prompt}]
-        tool_schemas = self.registry.api_schemas(self.policy.tools_for(self.spec.name))
+        tool_schemas = self.registry.api_schemas(self.spec.tools)
         tool_calls = 0
 
         for iteration in range(1, self.max_iterations + 1):
@@ -254,13 +255,8 @@ class Agent:
         return response
 
     def _execute_tool_block(self, block) -> dict:
-        """Policy -> budget -> execute. Every rejection is a tool_result the
+        """Budget check -> execute. A budget rejection is a tool_result the
         model can read and react to, not a crash."""
-        decision = self.policy.decide(self.spec.name, block.name)
-        if not decision.allowed:
-            self.log(f"  [{self.spec.name}] tool  {block.name} DENIED: {decision.reason}")
-            return _tool_error(block.id, f"Denied by policy: {decision.reason}")
-
         try:
             self.budget.check_tool_call()
         except BudgetExceeded as exc:
